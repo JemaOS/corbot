@@ -9,12 +9,17 @@ way they work in an LXD container on Linux. Needs Windows 10 21H2 or newer, or W
   local\corbot status    what is running
   local\corbot logs      follow the app's and the main agent's logs
   local\corbot shell     a root shell in the distribution
+  local\corbot open      start it if needed and open it in the browser
   local\corbot stop | start
   local\corbot destroy   delete the distribution and everything the bots made
 
 Settings (environment): CORBOT_NAME (corbot), CORBOT_PORT (8787), CORBOT_SCREENS (4), CORBOT_SCREEN_SIZE (1440x900),
 CORBOT_IMAGE (an Ubuntu 24.04 WSL rootfs: a URL or a local .tar.gz). On first deploy also XAI_API_KEY,
 COMPOSIO_API_KEY, ALLOWED_EMAILS, and KILOCODE_API_KEY with CORBOT_PROVIDER and CORBOT_MODEL.
+CORBOT_NO_BROWSER=1 keeps `open` from starting a browser.
+
+Nothing installed yet (no WSL)? Double-click install.cmd in the folder above: it sets everything up
+and then calls this.
 #>
 param(
   [Parameter(Position = 0)][string]$Command = ''
@@ -187,6 +192,20 @@ try {
     'start' {
       Test-Wsl; Assert-Exists; Start-Systemd; Start-KeepAlive
       Write-Host "open http://localhost:$Port"
+    }
+    'open' {
+      Test-Wsl; Assert-Exists; Start-Systemd; Start-KeepAlive
+      $up = $false
+      foreach ($i in 1..90) {
+        try {
+          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 -Uri "http://127.0.0.1:$Port/api/health"
+          if ($r.Content -match '"ok"') { $up = $true; break }
+        } catch { }
+        Start-Sleep -Seconds 1
+      }
+      if (-not $up) { throw "the app does not answer on port $Port. Look at:  local\corbot logs" }
+      Write-Host "open http://localhost:$Port"
+      if (-not (Setting 'CORBOT_NO_BROWSER' '')) { Start-Process "http://localhost:$Port" }
     }
     'destroy' {
       Test-Wsl

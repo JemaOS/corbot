@@ -94,7 +94,9 @@ deploy() {
   cd "$BUILD"
   find . -type f \( -name '*.sh' -o -name '*.py' -o -path ./local/corbot \) -exec sed -i 's/\r$//' {} +
   echo "== building (the first time takes a few minutes)"
-  npm ci --no-audit --no-fund >/var/log/corbot/build.log 2>&1 || { tail -30 /var/log/corbot/build.log; exit 1; }
+  # --ignore-scripts: the SQLite package ships ready-made binaries; without this npm tries to compile it,
+  # and a fresh distribution has no compiler.
+  npm ci --ignore-scripts --no-audit --no-fund >/var/log/corbot/build.log 2>&1 || { tail -30 /var/log/corbot/build.log; exit 1; }
   bash scripts/pack.sh /root/corbot-app.tgz >>/var/log/corbot/build.log 2>&1 || { tail -30 /var/log/corbot/build.log; exit 1; }
   echo "== installing"
   bash local/install-app.sh /root/corbot-app.tgz
