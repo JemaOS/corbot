@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Build the app and pack what the computer needs to run it (no secrets, no node_modules).
+# Usage: scripts/pack.sh [output.tgz]
+# On the computer: local/install-app.sh <the .tgz> does the rest (it is also inside the pack).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+out="${1:-corbot-app.tgz}"
+rm -rf server/dist web/dist
+npm run build
+tar -czf "$out" \
+  package.json package-lock.json .env.example \
+  server/package.json server/dist server/box \
+  web/package.json web/dist \
+  scripts/add-corbot-to-hermes.py scripts/sign-in-link.sh \
+  local/provision.sh local/install-app.sh local/wsl.sh
+echo "packed $(du -h "$out" | cut -f1) -> $out"

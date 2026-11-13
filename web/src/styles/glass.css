@@ -1,0 +1,128 @@
+/* ---------- liquid glass ----------
+   Imported last. Translucent, blurred surfaces for the pieces that float above other content:
+   the chat header, menus, dialogs and the jump button. Everything else keeps its solid surface.
+
+   Kept cheap on purpose (old Chromium builds, modest GPUs):
+   - backdrop-filter only on small or rarely repainted layers, never on the scrolling content itself;
+   - the ambient light behind the chat is a plain gradient: no filter, no animation;
+   - no SVG displacement filters, no nested blurred layers inside another blurred layer.
+   Needs backdrop-filter (Chromium 76+) and color-mix (Chromium 111+); without them the solid design stays. */
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root {
+    --glass-filter: blur(18px) saturate(170%);
+    --glass-filter-soft: blur(10px) saturate(150%);
+    --glass-bg: color-mix(in srgb, var(--color-bg-pane) 64%, transparent);
+    --glass-bg-hover: color-mix(in srgb, var(--color-bg-pane) 82%, transparent);
+    --glass-bg-strong: color-mix(in srgb, var(--color-bg-elevated) 78%, transparent);
+    --glass-border: #1C1C1C17;
+    /* the lit rim: a bright top edge and a faint inner outline */
+    --glass-edge: inset 0 1px 0 #FFFFFFCC, inset 0 0 0 0.5px #FFFFFF80;
+    --glass-shadow: 0 8px 24px -6px #1C1C1C24, 0 1px 2px #1C1C1C0F;
+    --glass-shadow-lg: 0 24px 48px -12px #1C1C1C38, 0 8px 16px -8px #1C1C1C1F;
+    --glass-tint: 12%;
+  }
+  :root[data-theme='dark'] {
+    --glass-bg: color-mix(in srgb, #2A2A2A 58%, transparent);
+    --glass-bg-hover: color-mix(in srgb, #3A3A3A 66%, transparent);
+    --glass-bg-strong: color-mix(in srgb, var(--color-bg-elevated) 76%, transparent);
+    --glass-border: #F5F5F51F;
+    --glass-edge: inset 0 1px 0 #FFFFFF24, inset 0 0 0 0.5px #FFFFFF12;
+    --glass-shadow: 0 8px 24px -6px #00000066;
+    --glass-shadow-lg: 0 24px 48px -12px #00000099;
+    --glass-tint: 16%;
+  }
+
+  /* ---------- ambient light behind the chat, in the bot's colour: gives the glass something to bend ---------- */
+  .chat { isolation: isolate; }
+  .chat::before {
+    content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(60% 45% at 85% 0%, color-mix(in srgb, var(--bot-fill, #1E86FC) var(--glass-tint), transparent) 0%, transparent 100%),
+      radial-gradient(55% 40% at 5% 100%, color-mix(in srgb, var(--bot-fill, #8F59F9) calc(var(--glass-tint) * 0.75), transparent) 0%, transparent 100%);
+  }
+
+  /* ---------- chat header: messages blur away as they scroll under it ---------- */
+  .chat__header::before {
+    content: ''; position: absolute; left: 0; right: 0; top: 0; bottom: -14px; z-index: -1; pointer-events: none;
+    -webkit-backdrop-filter: var(--glass-filter-soft); backdrop-filter: var(--glass-filter-soft);
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 45%, transparent 100%);
+    mask-image: linear-gradient(180deg, #000 0%, #000 45%, transparent 100%);
+  }
+  .chat__header {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--color-bg-chrome) 70%, transparent) 0%, transparent 100%);
+  }
+
+  .chat__pill, .chat__header .icon-btn, .share-btn, .jump-btn {
+    background: var(--glass-bg); border-color: var(--glass-border);
+    box-shadow: var(--glass-edge), var(--glass-shadow);
+    -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter);
+  }
+  .chat__pill:hover, .chat__header .icon-btn:hover, .share-btn:hover, .jump-btn:hover { background: var(--glass-bg-hover); }
+  /* a soft press, like a drop giving way */
+  .chat__pill, .chat__header .icon-btn, .share-btn {
+    transition: background-color 120ms var(--ease-out), transform 180ms var(--ease-out);
+  }
+  .chat__pill:active, .share-btn:active { transform: scale(0.97); }
+  .chat__header .icon-btn:active { transform: scale(0.94); }
+
+  /* ---------- menus and drop-down lists ---------- */
+  .menu, .select-pop {
+    background: var(--glass-bg-strong); border-color: var(--glass-border);
+    box-shadow: var(--glass-edge), var(--glass-shadow-lg);
+    -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter);
+  }
+
+  /* ---------- dialogs ---------- */
+  .modal {
+    background: var(--glass-bg-strong); border-color: var(--glass-border);
+    box-shadow: var(--glass-edge), var(--glass-shadow-lg);
+    -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter);
+  }
+  .modal-scrim { background: color-mix(in srgb, var(--color-bg-scrim) 70%, transparent); }
+  .cfg-content { background: transparent; }
+  .cfg-nav { background: var(--color-bg-subtle); }
+  .cfg-savebar { background: transparent; }
+  .cfg-savebar.is-dirty {
+    background: var(--glass-bg-strong);
+    -webkit-backdrop-filter: var(--glass-filter-soft); backdrop-filter: var(--glass-filter-soft);
+  }
+
+  /* ---------- surfaces that sit on a still background: the look of glass, without paying for a blur ---------- */
+  .composer {
+    background: color-mix(in srgb, var(--color-bg-pane) 80%, transparent); border-color: var(--glass-border);
+    box-shadow: var(--glass-edge), var(--glass-shadow);
+  }
+  .composer:focus-within { border-color: var(--color-border-primary); }
+  .signin__card { box-shadow: var(--glass-edge), var(--glass-shadow-lg); }
+  .signin {
+    background:
+      radial-gradient(50% 40% at 80% 10%, color-mix(in srgb, var(--color-bot-blue) var(--glass-tint), transparent) 0%, transparent 100%),
+      radial-gradient(50% 40% at 15% 90%, color-mix(in srgb, var(--color-bot-purple) var(--glass-tint), transparent) 0%, transparent 100%),
+      var(--color-bg-sidebar);
+  }
+  .signin__card { background: color-mix(in srgb, var(--color-bg-elevated) 72%, transparent); border-color: var(--glass-border); }
+
+  /* full-screen dialogs on phones cover everything: nothing to see through, so no blur */
+  @media (max-width: 639.98px) {
+    .apps-modal, .bot-settings {
+      background: var(--color-bg-elevated); box-shadow: none;
+      -webkit-backdrop-filter: none; backdrop-filter: none;
+    }
+  }
+
+  /* people who ask for less transparency get the solid surfaces back */
+  @media (prefers-reduced-transparency: reduce) {
+    :root, :root[data-theme='dark'] {
+      --glass-filter: none; --glass-filter-soft: none;
+      --glass-bg: var(--color-bg-pane); --glass-bg-hover: var(--color-bg-elevated-hover); --glass-bg-strong: var(--color-bg-elevated);
+    }
+    .chat::before { display: none; }
+    .composer { background: var(--color-bg-pane); }
+    .signin__card { background: var(--color-bg-elevated); }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__pill:active, .share-btn:active, .chat__header .icon-btn:active { transform: none; }
+}

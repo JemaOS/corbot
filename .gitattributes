@@ -1,0 +1,8 @@
+# Scripts that run on Linux (also inside WSL on Windows) must keep Unix line endings.
+*.sh text eol=lf
+*.py text eol=lf
+local/corbot text eol=lf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.wav binary
+*.png binary

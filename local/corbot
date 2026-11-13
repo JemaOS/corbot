@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Run Corbot on this machine, with no cloud computer: the bots work in an LXD container.
+#
+#   local/corbot up        create the container and set it up (screens, Chrome, Node, Hermes), then deploy
+#   local/corbot deploy    build the app and install or upgrade it in the container
+#   local/corbot model     choose the model the main bot runs on (Hermes' own setup, in the container)
+#   local/corbot status    what is running
+#   local/corbot logs      follow the app's and the main agent's logs
+#   local/corbot shell     a root shell in the container
+#   local/corbot stop | start
+#   local/corbot destroy   delete the container and everything the bots made
+#
+# Settings (environment): CORBOT_NAME (corbot), CORBOT_PORT (8787), CORBOT_SCREENS (4), CORBOT_SCREEN_SIZE (1440x900),
+# CORBOT_IMAGE (ubuntu:24.04). On first deploy also XAI_API_KEY, COMPOSIO_API_KEY, ALLOWED_EMAILS, and
+# KILOCODE_API_KEY with CORBOT_PROVIDER and CORBOT_MODEL to give the main bot a model at once.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+NAME="${CORBOT_NAME:-corbot}"; PORT="${CORBOT_PORT:-8787}"; SCREENS="${CORBOT_SCREENS:-4}"
+SIZE="${CORBOT_SCREEN_SIZE:-1440x900}"; IMAGE="${CORBOT_IMAGE:-ubuntu:24.04}"
+run() { lxc exec "$NAME" -- "$@"; }
+exists() { lxc info "$NAME" >/dev/null 2>&1; }
+
+provision() {
+  if ! exists; then
+    lxc launch "$IMAGE" "$NAME"
+    run cloud-init status --wait >/dev/null 2>&1 || true
+  fi
+  lxc file push -q local/provision.sh "$NAME/root/provision.sh"
+  run env CORBOT_SCREENS="$SCREENS" CORBOT_SCREEN_SIZE="$SIZE" bash /root/provision.sh
+}
+
+# The app listens inside the container only; this is the one door from this machine to it.
+forward() {
+  lxc config device remove "$NAME" corbot-app >/dev/null 2>&1 || true
+  lxc config device add "$NAME" corbot-app proxy "listen=tcp:127.0.0.1:$PORT" "connect=tcp:127.0.0.1:$PORT" >/dev/null
+}
+
+deploy() {
+  [ -d node_modules ] || npm ci --no-audit --no-fund
+  scripts/pack.sh /tmp/corbot-app.tgz >/dev/null
+  lxc file push -q /tmp/corbot-app.tgz "$NAME/root/corbot-app.tgz"
+  lxc file push -q local/install-app.sh "$NAME/root/install-app.sh"
+  run env PORT="$PORT" MAX_BOTS="$SCREENS" XAI_API_KEY="${XAI_API_KEY:-}" COMPOSIO_API_KEY="${COMPOSIO_API_KEY:-}" \
+    ALLOWED_EMAILS="${ALLOWED_EMAILS:-}" KILOCODE_API_KEY="${KILOCODE_API_KEY:-}" CORBOT_MODEL="${CORBOT_MODEL:-}" CORBOT_PROVIDER="${CORBOT_PROVIDER:-}" bash /root/install-app.sh /root/corbot-app.tgz
+  forward
+  echo "open http://localhost:$PORT"
+}
+
+case "${1:-}" in
+  up) provision; deploy ;;
+  deploy) deploy ;;
+  model)
+    run env HOME=/root PATH=/root/.local/bin:/usr/bin:/bin hermes model
+    run systemctl restart corbot-hermes ;;
+  status)
+    lxc list "$NAME" -c ns4
+    run systemctl is-active corbot-app corbot-hermes $(for i in $(seq 0 $((SCREENS - 2))); do printf 'corbot-screen@%d ' $((100 + i)); done) corbot-screen@99 || true
+    curl -fsS -m 3 "http://127.0.0.1:$PORT/api/health" && echo || echo "the app does not answer on port $PORT" ;;
+  logs) run tail -n 50 -F /var/log/corbot/app.log /var/log/corbot/hermes.log ;;
+  shell) run env HOME=/root PATH=/root/.local/bin:/opt/corbot/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin bash -l ;;
+  stop) lxc stop "$NAME" ;;
+  start) lxc start "$NAME"; echo "open http://localhost:$PORT" ;;
+  destroy) lxc delete --force "$NAME" ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
