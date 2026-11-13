@@ -12,5 +12,5 @@ tar -czf "$out" \
   server/package.json server/dist server/box \
   web/package.json web/dist \
   scripts/add-corbot-to-hermes.py scripts/sign-in-link.sh \
-  local/provision.sh local/install-app.sh local/wsl.sh
+  local/provision.sh local/install-app.sh local/patch-hermes.py local/wsl.sh
 echo "packed $(du -h "$out" | cut -f1) -> $out"

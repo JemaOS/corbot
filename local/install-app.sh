@@ -90,6 +90,13 @@ if os.environ.get('CORBOT_MODEL') and os.environ.get('CORBOT_PROVIDER') and not 
 yaml.safe_dump(cfg, open(path, 'w', encoding='utf-8'), sort_keys=False, allow_unicode=True)
 EOF
 
+# 4b. Keep Hermes from mangling screenshots in conversations (its secret redactor used to cut runs
+# of base64 inside images, and providers then rejected the request). Re-applied on every deploy and
+# to every bot's own copy of Hermes.
+find /root/.hermes /opt/corbot/data/engines -path '*/agent/redact.py' -print 2>/dev/null | while read -r redact; do
+  python3 "$APP/local/patch-hermes.py" "$redact" || true
+done || true   # on a first install the engines folder is not there yet, and find says so with an error
+
 # 5. The two services.
 cat > /etc/systemd/system/corbot-hermes.service <<EOF
 [Unit]
