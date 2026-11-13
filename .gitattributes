@@ -6,3 +6,4 @@ local/corbot text eol=lf
 *.ps1 text eol=crlf
 *.wav binary
 *.png binary
+*.ico binary

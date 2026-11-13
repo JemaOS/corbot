@@ -7,24 +7,63 @@
 #   local/corbot status    what is running
 #   local/corbot logs      follow the app's and the main agent's logs
 #   local/corbot shell     a root shell in the container
+#   local/corbot open      start it if needed and open it in the browser
 #   local/corbot stop | start
 #   local/corbot destroy   delete the container and everything the bots made
 #
 # Settings (environment): CORBOT_NAME (corbot), CORBOT_PORT (8787), CORBOT_SCREENS (4), CORBOT_SCREEN_SIZE (1440x900),
 # CORBOT_IMAGE (ubuntu:24.04). On first deploy also XAI_API_KEY, COMPOSIO_API_KEY, ALLOWED_EMAILS, and
 # KILOCODE_API_KEY with CORBOT_PROVIDER and CORBOT_MODEL to give the main bot a model at once.
+# CORBOT_BUILD=box builds the app in the container even when this machine has Node.js.
+# CORBOT_NO_BROWSER=1 keeps `open` from starting a browser.
+#
+# Nothing installed yet (no LXD)? Run ./install.sh: it sets everything up and then calls this.
 set -euo pipefail
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/.."
 NAME="${CORBOT_NAME:-corbot}"; PORT="${CORBOT_PORT:-8787}"; SCREENS="${CORBOT_SCREENS:-4}"
 SIZE="${CORBOT_SCREEN_SIZE:-1440x900}"; IMAGE="${CORBOT_IMAGE:-ubuntu:24.04}"
 run() { lxc exec "$NAME" -- "$@"; }
 exists() { lxc info "$NAME" >/dev/null 2>&1; }
+running() { lxc info "$NAME" 2>/dev/null | grep -qi '^status: *running'; }
+healthy() { curl -fsS -m 3 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; }
+
+# LXD must be there and must answer. Someone who was just added to the `lxd` group is not in it
+# yet in this session (that takes a new login): run through `sg` so they do not have to log out.
+need_lxc() {
+  command -v lxc >/dev/null 2>&1 || { echo "corbot: LXD is not installed. Run ./install.sh first: it installs what is missing." >&2; exit 1; }
+  lxc list >/dev/null 2>&1 && return 0
+  if [ -z "${CORBOT_SG:-}" ] && command -v sg >/dev/null 2>&1 && id -nG "$(id -un)" | tr ' ' '\n' | grep -qx lxd; then
+    exec env CORBOT_SG=1 sg lxd -c "$(printf '%q ' bash "$SELF" "$@")"
+  fi
+  echo "corbot: LXD does not answer, or this account may not use it. Run ./install.sh, or add yourself to the lxd group and log in again." >&2
+  exit 1
+}
+
+# The container needs the internet to set itself up. The usual reason it has none: Docker on this
+# machine, whose firewall rules drop what LXD's network forwards.
+need_network() {
+  for _ in $(seq 1 30); do
+    run bash -c 'curl -fsS -m 5 -o /dev/null http://archive.ubuntu.com/ubuntu/dists/noble/Release' >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  cat >&2 <<'EOF'
+corbot: the container cannot reach the internet, so it cannot be set up.
+If Docker is installed on this machine, its firewall blocks LXD's network. Let it through with:
+  sudo iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
+  sudo iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+then run this command again.
+EOF
+  exit 1
+}
 
 provision() {
   if ! exists; then
     lxc launch "$IMAGE" "$NAME"
     run cloud-init status --wait >/dev/null 2>&1 || true
   fi
+  running || lxc start "$NAME"
+  need_network
   lxc file push -q local/provision.sh "$NAME/root/provision.sh"
   run env CORBOT_SCREENS="$SCREENS" CORBOT_SCREEN_SIZE="$SIZE" bash /root/provision.sh
 }
@@ -35,16 +74,50 @@ forward() {
   lxc config device add "$NAME" corbot-app proxy "listen=tcp:127.0.0.1:$PORT" "connect=tcp:127.0.0.1:$PORT" >/dev/null
 }
 
+# Node.js 22 on this machine, to build the app here. Without it the container builds it.
+node_here() {
+  [ "${CORBOT_BUILD:-}" != box ] && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 \
+    && [ "$(node -p 'Number(process.versions.node.split(".")[0])' 2>/dev/null || echo 0)" -ge 22 ]
+}
+
+# Build in the container, which has Node.js from local/provision.sh: nothing is needed on this machine.
+build_in_box() {
+  local src; src="$(mktemp /tmp/corbot-src.XXXXXX.tgz)"
+  tar --exclude=node_modules --exclude=.git --exclude=dist --exclude=.env --exclude=./data --exclude=./tests -czf "$src" .
+  lxc file push -q "$src" "$NAME/root/corbot-src.tgz"
+  rm -f "$src"
+  echo "== building in the container (the first time takes a few minutes)"
+  run env PATH=/opt/corbot/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root bash -c '
+    set -e
+    mkdir -p /var/log/corbot
+    rm -rf /root/corbot-src && mkdir -p /root/corbot-src
+    tar -xzf /root/corbot-src.tgz -C /root/corbot-src --no-same-owner && rm -f /root/corbot-src.tgz
+    cd /root/corbot-src
+    # --ignore-scripts: the SQLite package ships ready-made binaries; without this npm tries to compile it.
+    npm ci --ignore-scripts --no-audit --no-fund >/var/log/corbot/build.log 2>&1 || { tail -30 /var/log/corbot/build.log; exit 1; }
+    bash scripts/pack.sh /root/corbot-app.tgz >>/var/log/corbot/build.log 2>&1 || { tail -30 /var/log/corbot/build.log; exit 1; }'
+}
+
 deploy() {
-  [ -d node_modules ] || npm ci --no-audit --no-fund
-  scripts/pack.sh /tmp/corbot-app.tgz >/dev/null
-  lxc file push -q /tmp/corbot-app.tgz "$NAME/root/corbot-app.tgz"
+  exists || { echo "corbot: there is no '$NAME' container yet. Create it with: local/corbot up" >&2; exit 1; }
+  running || lxc start "$NAME"
+  if node_here; then
+    [ -d node_modules ] || npm ci --no-audit --no-fund
+    scripts/pack.sh /tmp/corbot-app.tgz >/dev/null
+    lxc file push -q /tmp/corbot-app.tgz "$NAME/root/corbot-app.tgz"
+  else
+    build_in_box
+  fi
   lxc file push -q local/install-app.sh "$NAME/root/install-app.sh"
   run env PORT="$PORT" MAX_BOTS="$SCREENS" XAI_API_KEY="${XAI_API_KEY:-}" COMPOSIO_API_KEY="${COMPOSIO_API_KEY:-}" \
     ALLOWED_EMAILS="${ALLOWED_EMAILS:-}" KILOCODE_API_KEY="${KILOCODE_API_KEY:-}" CORBOT_MODEL="${CORBOT_MODEL:-}" CORBOT_PROVIDER="${CORBOT_PROVIDER:-}" bash /root/install-app.sh /root/corbot-app.tgz
   forward
   echo "open http://localhost:$PORT"
 }
+
+case "${1:-}" in
+  up|deploy|model|status|logs|shell|stop|start|open|destroy) need_lxc "$@" ;;
+esac
 
 case "${1:-}" in
   up) provision; deploy ;;
@@ -58,8 +131,15 @@ case "${1:-}" in
     curl -fsS -m 3 "http://127.0.0.1:$PORT/api/health" && echo || echo "the app does not answer on port $PORT" ;;
   logs) run tail -n 50 -F /var/log/corbot/app.log /var/log/corbot/hermes.log ;;
   shell) run env HOME=/root PATH=/root/.local/bin:/opt/corbot/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin bash -l ;;
+  open)
+    exists || { echo "corbot: not installed yet. Run ./install.sh" >&2; exit 1; }
+    running || lxc start "$NAME"
+    for _ in $(seq 1 60); do healthy && break; sleep 1; done
+    healthy || { echo "corbot: the app does not answer on port $PORT. Look at: local/corbot logs" >&2; exit 1; }
+    echo "open http://localhost:$PORT"
+    if [ -z "${CORBOT_NO_BROWSER:-}" ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then xdg-open "http://localhost:$PORT" >/dev/null 2>&1 & fi ;;
   stop) lxc stop "$NAME" ;;
   start) lxc start "$NAME"; echo "open http://localhost:$PORT" ;;
   destroy) lxc delete --force "$NAME" ;;
-  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

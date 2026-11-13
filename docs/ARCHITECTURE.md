@@ -2,7 +2,7 @@
 
 A web app (`web/`) and a Node server (`server/`) sit in front of Hermes agents. Hermes owns each Bot's agent loop, history, memory and model. The server adds the things Hermes does not have: the chat interface, one screen per Bot on the computer they share, connected apps with approvals, routines, the Library, and voice.
 
-Everything runs on one Linux machine (by default an LXD container made by `local/corbot up`): the server, the Hermes gateways, the X displays and the Chromes. The optional outside services are Composio and xAI.
+Everything runs on one Linux machine (an LXD container on Linux, a WSL 2 distribution on Windows, both made by `local/corbot up`): the server, the Hermes gateways, the X displays and the Chromes. The optional outside services are Composio and xAI.
 
 ```text
 browser ── HTTP + SSE ──► server ── POST /v1/responses ──► Hermes gateway (one per Bot)
@@ -281,7 +281,9 @@ What `local/provision.sh` and `local/install-app.sh` put in place:
 
 Services: `corbot-screen@N` (one per display), `corbot-hermes` (the main agent's gateway, API on 127.0.0.1:8642, on display `:99`), `corbot-app` (the server; `KillMode=process`, so the managed gateways survive an app restart).
 
-`local/corbot` drives this from the host: `up`, `deploy`, `model`, `status`, `logs`, `shell`, `stop`, `start`, `destroy`. The app listens inside the container on 127.0.0.1; an LXD proxy device forwards the same port on the host's 127.0.0.1. `scripts/pack.sh` builds the tarball that `install-app.sh` unpacks. An upgrade replaces code only; `.env` and data are kept.
+`local/corbot` drives this from the host: `up`, `deploy`, `model`, `status`, `logs`, `shell`, `open`, `stop`, `start`, `destroy`. `deploy` builds on the host when it has Node.js 22, and in the container otherwise. The app listens inside the container on 127.0.0.1; an LXD proxy device forwards the same port on the host's 127.0.0.1. `scripts/pack.sh` builds the tarball that `install-app.sh` unpacks. An upgrade replaces code only; `.env` and data are kept.
+
+**Installers.** `install.sh` (Linux) and `install.cmd` + `install.ps1` (Windows) are for a machine that has nothing yet. They check the machine, install the one prerequisite (LXD, or WSL 2 with a restart that the Windows installer resumes from through a `RunOnce` entry), download the source when run on their own, call `local/corbot up`, and add a shortcut that runs `local/corbot open`. On Windows the machine is a WSL 2 distribution of its own instead of an LXD container (`local/corbot.ps1` on the Windows side, `local/wsl.sh` inside), and a Startup shortcut runs `start` at sign-in because WSL stops with Windows.
 
 ## Settings
 

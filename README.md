@@ -10,9 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="#install"><img alt="Linux" src="https://img.shields.io/badge/Linux-LXD-1c1c1c?logo=linux&logoColor=white"></a>
+  <a href="#on-linux"><img alt="Linux" src="https://img.shields.io/badge/Linux-LXD-1c1c1c?logo=linux&logoColor=white"></a>
   <a href="#on-windows"><img alt="Windows" src="https://img.shields.io/badge/Windows-WSL%202-0078d4"></a>
-  <img alt="Node 22 or newer" src="https://img.shields.io/badge/node-%E2%89%A522-3c873a?logo=nodedotjs&logoColor=white">
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1c1c1c">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-fd690f">
 </p>
@@ -116,38 +115,54 @@ So bots made here do not show up in Hermes Desktop's Bots tab, and bots made the
 
 ## Install
 
-You need Linux with [LXD](https://canonical.com/lxd) and Node.js 22 or newer.
+One step on a PC that has nothing yet. You need a 64-bit Intel/AMD PC, about 12 GB of free disk and an internet connection. The first install takes 10 to 30 minutes: it downloads Ubuntu, Chrome and Hermes.
+
+| | |
+|---|---|
+| **Windows 10 (21H2 or newer) or 11** | [Download the ZIP](https://github.com/JemaOS/corbot/archive/refs/heads/main.zip), unzip it, and double-click **`install.cmd`** |
+| **Linux** | `curl -fsSL https://raw.githubusercontent.com/JemaOS/corbot/main/install.sh \| bash` or, from a copy of this repository, `./install.sh` |
+
+The installer checks the PC, installs what is missing, sets Corbot up, adds a **Corbot** shortcut and opens the app at `http://localhost:8787`. Sign in with the email form.
+
+One thing is left to you: **the bots need an AI model before they can answer**. In the app, open the main bot's details panel, then **Engine**, and paste an API key or sign in to a subscription (see [Models and subscriptions](#models-and-subscriptions)).
+
+Running the installer again upgrades the app and keeps your bots and their data.
+
+### On Linux
+
+`install.sh` installs [LXD](https://canonical.com/lxd) if it is missing (it asks for your password for that only), creates a container named `corbot`, and builds the app inside it, so Node.js is not needed on your machine. Installing LXD was written for Ubuntu, Debian and what is built on them; on Fedora and Arch it is best effort. On another distribution, install LXD yourself and run `./install.sh` again.
+
+Afterwards, `local/corbot` manages it:
 
 ```bash
-npm ci
-local/corbot up          # creates the container, sets it up, builds and installs the app
-local/corbot model       # choose the model the main bot runs on (Hermes' own setup)
+local/corbot open        # start it if needed and open it in the browser
+local/corbot deploy      # build and install the current code (after a `git pull` or a change)
+local/corbot model       # choose the main bot's model from a terminal (Hermes' own setup)
+local/corbot status      # what is running; also: logs, shell, stop, start
+local/corbot destroy     # delete the container and everything the bots made
 ```
 
-Then open `http://localhost:8787` and sign in with the email form.
-
-- The container (`corbot`, Ubuntu 24.04) holds everything: one X display per bot, Chrome, Hermes, the app and its data. `local/corbot destroy` removes it all.
+- The container (Ubuntu 24.04) holds everything: one X display per bot, Chrome, Hermes, the app and its data.
 - Each screen is a TigerVNC display (`Xvnc`), so the X server and the VNC server are one process. The app's relay connects to it over a local TCP socket; the live view has no extra hop and no screen-scraping step.
-- The app listens on `127.0.0.1` only. `CORBOT_PORT`, `CORBOT_SCREENS` (how many bots, default 4) and `CORBOT_SCREEN_SIZE` (default `1440x900`) change the defaults.
+- The app listens on `127.0.0.1` only. `CORBOT_PORT`, `CORBOT_SCREENS` (how many bots, default 4) and `CORBOT_SCREEN_SIZE` (default `1440x900`) change the defaults; set them when you run the installer, for example `CORBOT_PORT=9000 ./install.sh`.
 - `XAI_API_KEY` and `COMPOSIO_API_KEY` are optional. Without them voice, `x_search`, connected apps and Google sign-in are switched off, and the bots are not offered those tools.
-- `local/corbot deploy` upgrades the app after a code change; `local/corbot status`, `logs` and `shell` look inside.
+- If Docker is installed on the same machine, its firewall can cut the container off from the internet. The installer notices and prints the two commands that fix it.
 
 ### On Windows
 
-You need Windows 10 (21H2 or newer) or Windows 11 on a 64-bit Intel/AMD PC, with WSL 2. If WSL is not there yet, run `wsl --install --no-distribution` in an administrator PowerShell and restart. Node.js is not needed on Windows.
+`install.cmd` switches WSL 2 on if it is not there yet. Windows asks for permission once and the PC has to restart; **the installer carries on by itself after you sign in again**. It then creates a WSL distribution named `corbot` and builds the app inside it. Node.js, Git and Docker are not needed.
 
-```powershell
-local\corbot up          # creates a WSL distribution named corbot, sets it up, builds and installs the app
-local\corbot model       # choose the model the main bot runs on
-```
-
-Then open `http://localhost:8787`. The same commands exist as on Linux (`deploy`, `status`, `logs`, `shell`, `stop`, `start`, `destroy`) and the same settings apply (`CORBOT_PORT`, `CORBOT_SCREENS`, ...; set them with `$env:CORBOT_PORT = '9000'`).
+Afterwards there is a **Corbot** icon on the desktop and in the Start menu, and the bots start when you sign in to Windows. `local\corbot` has the same commands as on Linux (`open`, `deploy`, `model`, `status`, `logs`, `shell`, `stop`, `start`, `destroy`) and the same settings (set them with `$env:CORBOT_PORT = '9000'` before running the installer).
 
 - The bots work in their own Ubuntu 24.04 distribution, separate from any other WSL distribution you have. Its disk is in `%LOCALAPPDATA%\Corbot`; `local\corbot destroy` removes it all.
-- The app is built inside that distribution, from this folder, which must be on a local drive.
-- After Windows restarts, run `local\corbot start`. WSL stops a distribution nothing is attached to, so `start` leaves one hidden process attached to keep the bots running.
+- Keep the folder you installed from, on a local drive: the shortcuts point at it, and the app is built from it.
+- WSL 2 needs virtualization (Intel VT-x or AMD-V) switched on in the PC's BIOS/UEFI. Most PCs have it on; the installer says so when it looks off.
+- WSL stops a distribution nothing is attached to, so `start` and `open` leave one hidden process attached to keep the bots running.
 - WSL's default localhost forwarding must be on (it is, unless `.wslconfig` sets `localhostForwarding=false`).
+- If Windows shows "Windows protected your PC" when you open `install.cmd`, choose **More info**, then **Run anyway**: the file is not signed.
 - For development, work inside WSL or on Linux: the server only runs on Linux.
+
+### Other machines
 
 To use another kind of machine (a VM, a Docker image), run `local/provision.sh` on it as root, then `local/install-app.sh corbot-app.tgz` with a pack from `scripts/pack.sh`. It needs systemd.
 
@@ -179,6 +194,7 @@ The e2e suite creates a temporary bot (with its own Hermes gateway and screen), 
 server/src/         API, Hermes adapter (agent/loop.ts), engines (engine.ts), MCP endpoint (mcp.ts), screens (computer.ts)
 server/box/         what runs on the computer to dress a screen (desktop, dock, home screen, Chrome)
 web/src/            chat, bot settings, app connections, computer viewer, voice
+install.sh, install.cmd, install.ps1   the one-step installers (Linux, Windows)
 local/              the container: provision, install, the `corbot` command (`corbot.cmd` / `corbot.ps1` / `wsl.sh` on Windows)
 scripts/            pack, Hermes config helper, sign-in link
 tools/              translation check
