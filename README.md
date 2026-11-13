@@ -12,6 +12,7 @@
 <p align="center">
   <a href="#on-linux"><img alt="Linux" src="https://img.shields.io/badge/Linux-LXD-1c1c1c?logo=linux&logoColor=white"></a>
   <a href="#on-windows"><img alt="Windows" src="https://img.shields.io/badge/Windows-WSL%202-0078d4"></a>
+  <a href="https://github.com/JemaOS/corbot/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/JemaOS/corbot?color=1c1c1c"></a>
   <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1c1c1c">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-fd690f">
 </p>
@@ -119,7 +120,7 @@ One step on a PC that has nothing yet. You need a 64-bit Intel/AMD PC, about 12 
 
 | | |
 |---|---|
-| **Windows 10 (21H2 or newer) or 11** | [Download the ZIP](https://github.com/JemaOS/corbot/archive/refs/heads/main.zip), unzip it, and double-click **`install.cmd`** |
+| **Windows 10 (21H2 or newer) or 11** | [Download Corbot](https://github.com/JemaOS/corbot/releases/latest), unzip it, and double-click **`install.cmd`** |
 | **Linux** | `curl -fsSL https://raw.githubusercontent.com/JemaOS/corbot/main/install.sh \| bash` or, from a copy of this repository, `./install.sh` |
 
 The installer checks the PC, installs what is missing, sets Corbot up, adds a **Corbot** shortcut and opens the app at `http://localhost:8787`. Sign in with the email form.
