@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+<title id="title">Corbot</title>
+<desc id="desc">Your team. Their own computers. Three Bots, each a single eye in a coloured shape, on a warm white background.</desc>
+<rect width="1280" height="360" rx="24" fill="#F8F7F4"/>
+<g font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+<rect x="56" y="53" width="8" height="8" rx="4" fill="#14C16F"/>
+<text x="77" y="64" font-size="14" font-weight="600" letter-spacing="2" fill="#686661">SELF-HOSTED · MIT</text>
+<text x="54" y="145" font-size="65" font-weight="700" letter-spacing="-3" fill="#1C1C1C">Corbot</text>
+<text x="57" y="199" font-size="27" fill="#55534F">Your team. Their own computers.</text>
+<text x="57" y="285" font-size="15" fill="#77746F">POWERED BY</text>
+<text x="175" y="285" font-size="16" font-weight="600" fill="#363430">Hermes  /  Composio  /  xAI</text>
+</g>
+<path d="M728 64V296" stroke="#E4E1DB"/>
+<svg x="752" y="92" width="184" height="184" viewBox="0 0 48 48"><path d="M21.5 4.4a5 5 0 0 1 5 0l13.3 7.7a5 5 0 0 1 2.5 4.3v15.2a5 5 0 0 1-2.5 4.3l-13.3 7.7a5 5 0 0 1-5 0L8.2 35.9a5 5 0 0 1-2.5-4.3V16.4a5 5 0 0 1 2.5-4.3Z" fill="#1E86FC"/><defs><clipPath id="eye1"><path d="M12.5 24Q24 13.5 35.5 24Q24 34.5 12.5 24Z"/></clipPath></defs><path d="M12.5 24Q24 13.5 35.5 24Q24 34.5 12.5 24Z" fill="#fff"/><g clip-path="url(#eye1)"><circle cx="27.29" cy="24.77" r="5.60" fill="#141414"/><circle cx="25.50" cy="22.86" r="1.46" fill="#fff"/></g></svg>
+<svg x="948" y="66" width="150" height="150" viewBox="0 0 48 48"><path d="M21.200 5.300a4 4 0 0 1 5.600 0C33 11.500 41 19.500 41 28a17 17 0 0 1-34 0c0-8.500 8-16.500 14.200-22.700Z" fill="#FD690F"/><defs><clipPath id="eye2"><path d="M11.94 27.5Q24 14.08 36.06 27.5Q24 40.92 11.94 27.5Z"/></clipPath></defs><path d="M11.94 27.5Q24 14.08 36.06 27.5Q24 40.92 11.94 27.5Z" fill="#fff"/><g clip-path="url(#eye2)"><circle cx="24.00" cy="27.15" r="5.87" fill="#141414"/><circle cx="22.12" cy="25.15" r="1.53" fill="#fff"/></g></svg>
+<svg x="968" y="196" width="132" height="132" viewBox="0 0 48 48"><path d="M14 5h20a9 9 0 0 1 9 9v20a9 9 0 0 1-9 9H14a9 9 0 0 1-9-9V14a9 9 0 0 1 9-9Z" fill="#14C16F"/><defs><clipPath id="eye3"><path d="M12.5 24Q24 11.2 35.5 24Q24 36.8 12.5 24Z"/></clipPath></defs><path d="M12.5 24Q24 11.2 35.5 24Q24 36.8 12.5 24Z" fill="#fff"/><g clip-path="url(#eye3)"><circle cx="24.00" cy="24.00" r="5.60" fill="#141414"/><circle cx="22.21" cy="22.10" r="1.46" fill="#fff"/></g></svg>
+
+</svg>
