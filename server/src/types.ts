@@ -64,7 +64,12 @@ export interface MessageBody {
   /** Set when a message came from another bot, a routine or a voice call rather than the user typing. */
   from?: { kind: 'bot' | 'routine' | 'voice'; id: string; name: string };
   citations?: { url: string; title?: string }[];
+  /** Files the person added to the message (see attachments.ts). */
+  attachments?: Attachment[];
 }
+
+/** A file added to a message. `path` is relative to the bot's Library folder. */
+export interface Attachment { name: string; path: string; size: number }
 
 export interface ToolCallBody {
   type: 'tool-call';

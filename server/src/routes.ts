@@ -18,6 +18,7 @@ import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
+import { attachmentNote, checkAttachments, saveUpload, UploadError } from './attachments.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
 export const api = new Hono<AuthVars>();
@@ -259,14 +260,31 @@ api.get('/bots/:id/rows', (c) => {
 api.post('/bots/:id/messages', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const { text } = await c.req.json<{ text: string }>();
-  if (!text?.trim()) return c.json({ error: 'empty' }, 400);
-  const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim() });
+  const body = await c.req.json<{ text?: string; attachments?: unknown }>();
+  const text = (body.text ?? '').trim();
+  const attachments = checkAttachments(b.id, body.attachments);
+  if (!text && !attachments.length) return c.json({ error: 'empty' }, 400);
+  const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text, ...(attachments.length ? { attachments } : {}) });
+  // The bot reads the person's words, then where the files they added are.
+  const forBot = [text, attachmentNote(b.id, attachments)].filter(Boolean).join('\n\n');
   // Group chats dispatch to their member Bots instead of running their own loop.
-  if (b.kind === 'room') dispatchRoomMessage(b.id, text.trim(), enqueue);
+  if (b.kind === 'room') dispatchRoomMessage(b.id, forBot, enqueue);
   // Any pending question card is answered by a free-text message.
-  else enqueue(b.id, { type: 'user', text: text.trim() });
+  else enqueue(b.id, { type: 'user', text: forBot });
   return c.json({ row });
+});
+
+/** One file for the next message: the raw bytes as the body, its name in `?name=`. */
+api.post('/bots/:id/attachments', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  try {
+    return c.json({ attachment: await saveUpload(b.id, c.req.query('name') ?? 'file', c.req.raw.body) });
+  } catch (e: any) {
+    if (e instanceof UploadError) return c.json({ error: e.message }, e.status);
+    console.warn('[attachments] upload failed', e?.message ?? e);
+    return c.json({ error: 'The file could not be saved.' }, 500);
+  }
 });
 
 api.post('/bots/:id/interrupt', (c) => {

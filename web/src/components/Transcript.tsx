@@ -3,6 +3,7 @@ import type { Bot, LiveState, MessageBody, Row, ToolCallBody } from '@shared/typ
 import { BotAvatar, BotAvatarFor } from '../avatar/BotAvatar';
 import { isWaitingForYou, serverLabel, serverText } from '../lib/phrases';
 import { clock, dividerLabel, duration } from '../lib/time';
+import { fileSize } from '../lib/files';
 import { tn, tx, useT } from '../i18n';
 import { useStore } from '../store';
 import { ThinkingBlock } from './ActivityLine';
@@ -64,7 +65,18 @@ const Bubble = memo(function Bubble({ row, side, pos }: { row: Row; side: 'left'
   return (
     <div className={`bubble-wrap is-${side}`}>
       <div className={`bubble is-${side === 'right' ? 'user' : 'agent'}${pos}${b.streaming ? ' is-streaming' : ''}`}>
-        {side === 'right' ? <div className="bubble__plain">{b.text}</div> : <Markdown text={b.text || ' '} />}
+        {b.attachments && b.attachments.length > 0 && (
+          <div className="bubble__files">
+            {b.attachments.map((a) => (
+              <a key={a.path} className="file-chip is-sent" href={`/api/bots/${row.botId}/files/raw?path=${encodeURIComponent(a.path)}`} title={a.name}>
+                <Icon name="file" size={14} opacity={0.56} />
+                <span className="file-chip__name">{a.name}</span>
+                <span className="file-chip__meta">{fileSize(a.size)}</span>
+              </a>
+            ))}
+          </div>
+        )}
+        {side === 'right' ? (b.text ? <div className="bubble__plain">{b.text}</div> : null) : <Markdown text={b.text || ' '} />}
         {b.citations && b.citations.length > 0 && (
           <div className="bubble__cites">
             {b.citations.slice(0, 6).map((c, i) => {
