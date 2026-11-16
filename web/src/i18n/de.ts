@@ -1,5 +1,11 @@
 /** Translations: the English sentence is the key. Checked by tools/i18n-check.mjs. */
 const dict: Record<string, string> = {
+  "Add photos and files": "Fotos und Dateien hinzufügen",
+  "Adding…": "Wird hinzugefügt…",
+  "Not added": "Nicht hinzugefügt",
+  "The file could not be added": "Die Datei konnte nicht hinzugefügt werden",
+  "You can add up to {n} files to a message.": "Sie können bis zu {n} Dateien zu einer Nachricht hinzufügen.",
+  "{name} is too big (the limit is 500 MB).": "{name} ist zu groß (das Limit liegt bei 500 MB).",
   "{app} connected": "{app} verbunden",
   "{joined} joined · {left} left": "{joined} beigetreten · {left} ausgetreten",
   "{n} app connected": "{n} App verbunden",

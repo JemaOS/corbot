@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
+import type { Attachment, Bot, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -33,7 +33,19 @@ export const api = {
   createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'mode'>) => req<{ bot: Bot }>('POST', '/bots', b),
   markRead: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/read`),
   rows: (id: string) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${id}/rows`),
-  send: (id: string, text: string) => req<{ row: Row }>('POST', `/bots/${id}/messages`, { text }),
+  send: (id: string, text: string, attachments: Attachment[] = []) => req<{ row: Row }>('POST', `/bots/${id}/messages`, { text, attachments }),
+  /** Put one file on the bot's computer, for the next message. */
+  async attach(id: string, file: File, signal?: AbortSignal): Promise<Attachment> {
+    const res = await fetch(`/api/bots/${id}/attachments?name=${encodeURIComponent(file.name || 'file')}`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/octet-stream' }, body: file, signal,
+    });
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { msg = ((await res.json()) as { error?: string }).error ?? msg; } catch { /* not json */ }
+      throw new ApiError(res.status, msg);
+    }
+    return ((await res.json()) as { attachment: Attachment }).attachment;
+  },
   interrupt: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/interrupt`),
   fresh: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/fresh`),
 
