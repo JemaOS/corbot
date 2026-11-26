@@ -12,6 +12,9 @@ import { Icon } from './Icon';
 
 export type ScreenMode = 'watch' | 'control';
 type Conn = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+/** How long "waking" may last before it is reported as a failure instead of a spinner. */
+const WAKING_TIMEOUT_MS = 15_000;
+
 type Phase = 'live' | 'switching' | 'waking' | 'asleep' | 'idle' | 'paused' | 'error';
 
 interface ScreenProps {
@@ -53,6 +56,8 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   const [resetAsk, setResetAsk] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // The last connection failure, so a screen that never shows a picture says why instead of spinning.
+  const [lastFailure, setLastFailure] = useState<string | null>(null);
 
   const status = computer?.status;
   const running = status === 'running';
@@ -92,6 +97,8 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
 
   useEffect(() => {
     if (!wantLive || !canvasRef.current) { setConn('idle'); return; }
+    hadFrame.current = false;
+    setLastFailure(null);
     let disposed = false;
     let rfb: RFBType | null = null;
     setConn('connecting');
@@ -110,10 +117,15 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       rfb.background = 'transparent';
       rfb.focusOnClick = mode === 'control';
       rfb.addEventListener('connect', () => { if (!disposed) { hadFrame.current = true; setConn('connected'); if (mode === 'control') rfb?.focus(); } });
-      rfb.addEventListener('disconnect', (e) => { if (!disposed) setConn((e as CustomEvent<{ clean: boolean }>).detail?.clean ? 'disconnected' : 'error'); });
-      rfb.addEventListener('securityfailure', () => { if (!disposed) setConn('error'); });
+      rfb.addEventListener('disconnect', (e) => {
+        if (disposed) return;
+        const clean = (e as CustomEvent<{ clean: boolean }>).detail?.clean;
+        if (!clean) setLastFailure(t('The screen closed the connection before the first frame.'));
+        setConn(clean ? 'disconnected' : 'error');
+      });
+      rfb.addEventListener('securityfailure', () => { if (!disposed) { setLastFailure(t('The screen refused the session.')); setConn('error'); } });
       rfbRef.current = rfb;
-    })().catch(() => { if (!disposed) setConn('error'); });
+    })().catch(() => { if (!disposed) { setLastFailure(t('The screen viewer could not start.')); setConn('error'); } });
     const el = canvasRef.current;
     return () => {
       disposed = true;
@@ -157,6 +169,16 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   else if (conn === 'error' || conn === 'disconnected') phase = 'error';
   else if (conn === 'connected') phase = 'live';
   else phase = hadFrame.current ? 'switching' : 'waking';
+
+  // "Waking" is a wait, not a state: when nothing has come through after a while, say so.
+  useEffect(() => {
+    if (phase !== 'waking') return;
+    const id = setTimeout(() => {
+      setLastFailure(t('No picture came through. Check that this device can reach the server, then retry.'));
+      setConn('error');
+    }, WAKING_TIMEOUT_MS);
+    return () => clearTimeout(id);
+  }, [phase, attempt, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const takeControl = () => {
     if (variant === 'panel' && !fullscreen) onExpand?.('control');
@@ -241,7 +263,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
               <span className="screen__text">
                 {!running ? t('Couldn’t wake {name}’s computer', { name: bot.name }) : conn === 'disconnected' ? t('The screen disconnected') : t('Couldn’t reach {name}’s screen', { name: bot.name })}
               </span>
-              {(wakeError || (status === 'error' && computer?.error)) && <span className="screen__sub">{wakeError ?? computer?.error}</span>}
+              {(wakeError || (status === 'error' && computer?.error) || lastFailure) && <span className="screen__sub">{wakeError ?? (status === 'error' ? computer?.error : null) ?? lastFailure}</span>}
               {running && screensFull(computer, bot.id) && <span className="screen__sub">{t('All {n} screens are in use. Reset one in Settings to free it.', { n: computer?.maxScreens ?? 0 })}</span>}
               <button type="button" className="screen__action" onClick={retry}>{t('Retry')}</button>
             </div>

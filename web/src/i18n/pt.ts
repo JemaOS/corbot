@@ -598,6 +598,10 @@ const dict: Record<string, string> = {
   "Tile": "Azulejo",
   "Tower": "Torre",
   "Nothing matches.": "Sem resultados.",
+  "The screen closed the connection before the first frame.": "O ecrã fechou a ligação antes da primeira imagem.",
+  "The screen refused the session.": "O ecrã recusou a sessão.",
+  "The screen viewer could not start.": "O visualizador do ecrã não conseguiu iniciar.",
+  "No picture came through. Check that this device can reach the server, then retry.": "Não chegou nenhuma imagem. Confirma que este dispositivo alcança o servidor e tenta novamente.",
 };
 
 export default dict;
