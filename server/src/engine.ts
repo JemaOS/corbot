@@ -372,6 +372,24 @@ export function engineHome(botId: string): string | null {
 }
 
 /**
+ * The provider pinned in this bot's own config.yaml (`model.provider`), if any. Hermes' api_server
+ * only applies an explicit request `model` when a `provider` accompanies it; without one it falls back
+ * to the config default, so a per-bot model change would be silently ignored. This lets callers send
+ * the config provider even when the bot row never had one persisted.
+ */
+export function configProvider(botId: string): string | null {
+  const home = engineHome(botId);
+  if (!home) return null;
+  try {
+    const cfg = readYaml(path.join(home, 'config.yaml'));
+    const p = cfg?.model?.provider;
+    return typeof p === 'string' && p.trim() ? p.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Hermes can run a private screen of its own for a profile (its "Bot Desktop": an Xvnc display with
  * state in <home>/bot-desktop). While that screen is up, the agent's computer-use tool acts there and
  * not on the screen this app shows (so does its browser tool, unless the config pins it to a Chrome
