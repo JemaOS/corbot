@@ -170,7 +170,22 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     upstream?.close();
   };
   // The same reasoning as for the upstream socket: small frames should leave at once.
-  (client as unknown as { _socket?: net.Socket })._socket?.setNoDelay(true);
+  const clientSocket = (client as unknown as { _socket?: net.Socket })._socket;
+  clientSocket?.setNoDelay(true);
+  // A phone on a slow tailnet link answers slowly; without a deadline the session dies during the
+  // handshake and the browser only sees a closed socket. Give it room, and keep TCP talking.
+  try { clientSocket?.setKeepAlive(true, 15_000); clientSocket?.setTimeout(120_000); } catch { /* not a TCP socket */ }
+  let prevBytes = -1;
+  const watchdog = setInterval(() => {
+    const bytes = clientSocket?.bytesWritten ?? 0;
+    if (!piping) return;
+    if (bytes === prevBytes && client.readyState === WebSocket.OPEN) {
+      try { client.ping(); } catch { /* closing */ }
+    }
+    prevBytes = bytes;
+  }, 20_000);
+  client.on('pong', () => { /* alive */ });
+  client.on('close', () => clearInterval(watchdog));
 
   client.on('message', (data: Buffer) => {
     if (!piping) return fromClient.push(Buffer.from(data));
