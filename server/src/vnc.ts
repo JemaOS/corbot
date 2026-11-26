@@ -175,6 +175,20 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   // A phone on a slow tailnet link answers slowly; without a deadline the session dies during the
   // handshake and the browser only sees a closed socket. Give it room, and keep TCP talking.
   try { clientSocket?.setKeepAlive(true, 15_000); clientSocket?.setTimeout(120_000); } catch { /* not a TCP socket */ }
+  // How the session actually goes: bytes both ways and the last thing each side sent. A phone that
+  // dies mid-frame and a phone that never asked for a frame look the same without this.
+  let upBytes = 0;
+  let downBytes = 0;
+  let lastClientMsg = -1;
+  let frames = 0;
+  const prevSocket = clientSocket;
+  client.on('message', () => { /* counted below, after the filter */ });
+  clientSocket?.on('data', (d: Buffer) => { upBytes += d.length; });
+  const origSend = client.send.bind(client);
+  (client as unknown as { send: typeof client.send }).send = ((data: unknown, opts?: unknown, cb?: unknown) => {
+    if (Buffer.isBuffer(data) || data instanceof ArrayBuffer) downBytes += Buffer.byteLength(data as Buffer);
+    return (origSend as (...a: unknown[]) => void)(data, opts, cb);
+  }) as typeof client.send;
   let prevBytes = -1;
   const watchdog = setInterval(() => {
     const bytes = clientSocket?.bytesWritten ?? 0;
@@ -185,10 +199,16 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     prevBytes = bytes;
   }, 20_000);
   client.on('pong', () => { /* alive */ });
-  client.on('close', () => clearInterval(watchdog));
+  client.on('close', () => {
+    clearInterval(watchdog);
+    console.log(`[vnc] flow up=${upBytes} down=${downBytes} lastClientMsg=${lastClientMsg} frames=${frames}`);
+  });
 
   client.on('message', (data: Buffer) => {
     if (!piping) return fromClient.push(Buffer.from(data));
+    const b = Buffer.from(data);
+    if (b.length) lastClientMsg = b[0];
+    if (b.length && b[0] === 3) frames++;
     const fwd = mode === 'watch' ? filter.feed(Buffer.from(data)) : Buffer.from(data);
     if (fwd.length && upstream?.open) upstream.send(fwd);
   });
