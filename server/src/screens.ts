@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import { cdpPortFor } from './desk.js';
 import { env } from './env.js';
+import { chromeFocusTakesText, textCursorAt } from './screen-focus.js';
 
 /**
  * The screens of the computer the bots work on. Every screen is an X display of this machine with
@@ -37,6 +39,8 @@ function run(cmd: string, args: string[], opts: { display?: number; timeoutMs?: 
     }, (err, stdout) => resolve({ code: err ? (typeof (err as any).code === 'number' ? (err as any).code : 1) : 0, out: stdout as unknown as Buffer }));
   });
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const socketOf = (n: number) => `/tmp/.X11-unix/X${n}`;
 const isOurs = (n: number) => n === DEFAULT_DISPLAY || n >= FIRST_EXTRA_DISPLAY;
@@ -112,22 +116,38 @@ export const screens = {
    * Touch and keyboard from a phone, played on the screen with xdotool. Coordinates are screen pixels.
    * Keys are limited to the editing and navigation keys a phone keyboard cannot type as text.
    */
-  async input(screenId: string, a: ScreenInput): Promise<void> {
+  async input(screenId: string, a: ScreenInput): Promise<{ keyboard?: boolean }> {
     const display = displayNumberOf(screenId);
     const x = (v: number) => String(Math.max(0, Math.round(v)));
+    const xdo = async (args: string[]) => {
+      const r = await run('xdotool', args, { display, timeoutMs: 15_000 });
+      if (r.code !== 0) throw new Error(`xdotool failed on screen ${screenId}`);
+    };
     let args: string[];
     switch (a.type) {
-      case 'tap':
-        // No --sync: it waits for the pointer to move, and a second tap on the same spot never moves it.
-        args = ['mousemove', x(a.x), x(a.y), 'click', a.button === 3 ? '3' : '1'];
-        break;
+      case 'tap': {
+        if (a.button === 3) {
+          await xdo(['mousemove', x(a.x), x(a.y), 'click', '3']);
+          return { keyboard: false };
+        }
+        // Point first, so the application under the finger shows its own cursor, and read it; then click
+        // and ask Chrome what took the focus. (No --sync on mousemove: a second tap on the same spot
+        // never moves the pointer and would wait for nothing.)
+        await xdo(['mousemove', x(a.x), x(a.y)]);
+        await sleep(120);
+        const textCursor = await textCursorAt(display);
+        await xdo(['click', '1']);
+        await sleep(180);
+        const chrome = await chromeFocusTakesText(cdpPortFor(screenId));
+        return { keyboard: chrome ?? textCursor };
+      }
       case 'scroll': {
         const n = Math.min(20, Math.max(1, Math.round(Math.abs(a.dy))));
         args = ['mousemove', x(a.x), x(a.y), 'click', '--repeat', String(n), '--delay', '15', a.dy > 0 ? '5' : '4'];
         break;
       }
       case 'text':
-        if (!a.text) return;
+        if (!a.text) return {};
         args = ['type', '--delay', '8', '--clearmodifiers', '--', a.text.slice(0, 2000)];
         break;
       case 'key': {
@@ -137,8 +157,8 @@ export const screens = {
         break;
       }
     }
-    const r = await run('xdotool', args, { display, timeoutMs: 15_000 });
-    if (r.code !== 0) throw new Error(`xdotool failed on screen ${screenId}`);
+    await xdo(args);
+    return {};
   },
 
   /** Where the VNC server of this screen listens. */

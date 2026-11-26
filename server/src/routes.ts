@@ -451,8 +451,9 @@ api.post('/bots/:id/input', async (c) => {
   const next = prev.catch(() => {}).then(() => screens.input(scr.screen_id, action));
   inputQueues.set(b.id, next);
   try {
-    await next;
-    return c.json({ ok: true });
+    const done = await next;
+    // For a tap: whether the spot takes text, so the phone opens its keyboard only where one types.
+    return c.json({ ok: true, ...(done.keyboard !== undefined ? { keyboard: done.keyboard } : {}) });
   } catch (e: any) {
     return c.json({ error: String(e?.message ?? e) }, 500);
   } finally {

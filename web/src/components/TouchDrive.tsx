@@ -45,12 +45,21 @@ export function TouchDrive({ botId, keysRef, onSent, onError }: Props) {
           }
           break;
         }
-        try { await api.screenInput(botId, next); onSent(); } catch (e) { onError((e as Error).message); }
+        try {
+          const r = await api.screenInput(botId, next);
+          onSent();
+          // A tap tells whether it landed where one types: the keyboard opens there and only there, and
+          // closes when the next tap lands on a button, a link or a close box.
+          if (next.type === 'tap' && next.button !== 3) {
+            if (r?.keyboard) focusKeys(keysRef.current);
+            else keysRef.current?.blur();
+          }
+        } catch (e) { onError((e as Error).message); }
       }
     } finally {
       busy.current = false;
     }
-  }, [botId, onSent, onError]);
+  }, [botId, onSent, onError, keysRef]);
   const send = useCallback((input: ScreenInput) => {
     pending.current.push({ ...input });
     void pump();
@@ -103,8 +112,6 @@ export function TouchDrive({ botId, keysRef, onSent, onError }: Props) {
     if (t.timer) clearTimeout(t.timer);
     if (t.moved || t.long) return;
     send({ type: 'tap', ...at(t.x, t.y), button: 1 });
-    // A tap is where one types next: bring up the keyboard, inside the same gesture so the phone allows it.
-    focusKeys(keysRef.current);
   };
 
   const onPointerCancel = () => {
@@ -168,7 +175,6 @@ export function TouchDrive({ botId, keysRef, onSent, onError }: Props) {
         onPointerCancel={onPointerCancel}
         onContextMenu={(e) => e.preventDefault()}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => { if (!touch.current) focusKeys(keysRef.current); }}
       />
       <textarea
         ref={keysRef}
