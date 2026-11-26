@@ -9,9 +9,22 @@ import { configApi } from '../lib/configApi';
 import { useT } from '../i18n';
 import { useSelectedBot, useStore } from '../store';
 import { Icon } from './Icon';
+import { TouchDrive, focusKeys } from './TouchDrive';
 
 export type ScreenMode = 'watch' | 'control';
 type Conn = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+/** Picture mode: the pause between two pictures once one has arrived. */
+const PICTURE_EVERY_MS = 700;
+
+/** True on touch-first devices (phones, tablets), where the screen is watched through pictures. */
+function usePictureMode(): boolean {
+  const [on] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches);
+  return on;
+}
+
+/** How long "waking" may last before it is reported as a failure instead of a spinner. */
+const WAKING_TIMEOUT_MS = 15_000;
+
 type Phase = 'live' | 'switching' | 'waking' | 'asleep' | 'idle' | 'paused' | 'error';
 
 interface ScreenProps {
@@ -53,6 +66,9 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   const [resetAsk, setResetAsk] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // The last connection failure, so a screen that never shows a picture says why instead of spinning.
+  const [lastFailure, setLastFailure] = useState<string | null>(null);
+  const [wakingSince, setWakingSince] = useState<number | null>(null);
 
   const status = computer?.status;
   const running = status === 'running';
@@ -63,6 +79,11 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   const large = variant === 'stage' || fullscreen;
   // The small panel view only streams a screen that already exists, so browsing bots never uses up screens.
   const wantLive = running && !paused && (variant === 'stage' || visible) && (opened || hasScreen);
+  // Phones and tablets watch through pictures: the live stream reaches them but their browser drops
+  // it within a second, while plain HTTP works everywhere the rest of the app does.
+  const pictures = usePictureMode();
+  const [shot, setShot] = useState(0);
+  const keysRef = useRef<HTMLTextAreaElement>(null);
 
   const wake = useCallback(() => {
     setWaking(true); setWakeError(null);
@@ -91,7 +112,15 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   }, []);
 
   useEffect(() => {
+    // Leaving the live path (tab hidden, panel not opened, computer not running) must not look like a
+    // failure: a re-created effect used to reset the failure and the 15 s timer turned that into an
+    // error, even though the picture had been streaming.
+    setLastFailure(null);
+    setWakingSince(null);
     if (!wantLive || !canvasRef.current) { setConn('idle'); return; }
+    if (pictures) { setConn('connecting'); return; }
+    hadFrame.current = false;
+    setLastFailure(null);
     let disposed = false;
     let rfb: RFBType | null = null;
     setConn('connecting');
@@ -104,16 +133,24 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       rfb.viewOnly = mode === 'watch';
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
-      // Sharp text and little compression work: right for a screen on this machine or a fast link.
-      rfb.qualityLevel = 8;
-      rfb.compressionLevel = 1;
+      // Sharp text and little compression work on a fast link. A phone over a tailnet gets the same
+      // picture with far fewer bytes: the first full frame is what stalls there, so it is made cheap
+      // and the link decides the rest.
+      const small = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+      rfb.qualityLevel = small ? 4 : 8;
+      rfb.compressionLevel = small ? 6 : 1;
       rfb.background = 'transparent';
       rfb.focusOnClick = mode === 'control';
       rfb.addEventListener('connect', () => { if (!disposed) { hadFrame.current = true; setConn('connected'); if (mode === 'control') rfb?.focus(); } });
-      rfb.addEventListener('disconnect', (e) => { if (!disposed) setConn((e as CustomEvent<{ clean: boolean }>).detail?.clean ? 'disconnected' : 'error'); });
-      rfb.addEventListener('securityfailure', () => { if (!disposed) setConn('error'); });
+      rfb.addEventListener('disconnect', (e) => {
+        if (disposed) return;
+        const clean = (e as CustomEvent<{ clean: boolean }>).detail?.clean;
+        if (!clean) setLastFailure(t('The screen closed the connection before the first frame.'));
+        setConn(clean ? 'disconnected' : 'error');
+      });
+      rfb.addEventListener('securityfailure', () => { if (!disposed) { setLastFailure(t('The screen refused the session.')); setConn('error'); } });
       rfbRef.current = rfb;
-    })().catch(() => { if (!disposed) setConn('error'); });
+    })().catch(() => { if (!disposed) { setLastFailure(t('The screen viewer could not start.')); setConn('error'); } });
     const el = canvasRef.current;
     return () => {
       disposed = true;
@@ -121,7 +158,23 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       rfbRef.current = null;
       el.innerHTML = '';
     };
-  }, [bot.id, wantLive, mode, attempt]);
+  }, [bot.id, wantLive, mode, attempt, pictures]);
+
+  // Picture mode: the next picture is asked for only once the previous one has arrived (or failed), so
+  // a slow link finishes each picture instead of restarting it; nothing is asked while the tab is hidden.
+  const nextShot = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleShot = useCallback((ms: number) => {
+    if (nextShot.current) clearTimeout(nextShot.current);
+    nextShot.current = setTimeout(() => {
+      nextShot.current = null;
+      if (document.visibilityState === 'visible') setShot((n) => n + 1);
+    }, ms);
+  }, []);
+  useEffect(() => () => { if (nextShot.current) clearTimeout(nextShot.current); }, []);
+  // After a tap or a keystroke the next picture is wanted now, not in 0.7 s.
+  const afterInput = useCallback(() => scheduleShot(120), [scheduleShot]);
+  const inputFailed = useCallback((m: string) => setNote(m || t('The screen did not take that.')), [t]);
+  useEffect(() => { if (pictures && visible && wantLive) scheduleShot(0); }, [pictures, visible, wantLive, attempt, scheduleShot]);
 
   useEffect(() => { onModeChange?.(mode); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -158,6 +211,19 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   else if (conn === 'connected') phase = 'live';
   else phase = hadFrame.current ? 'switching' : 'waking';
 
+  // "Waking" is a wait, not a state: when nothing has come through after a while, say so. The wait is
+  // timed from one attempt, not restarted by every re-render the store can trigger.
+  useEffect(() => {
+    if (phase !== 'waking') { setWakingSince(null); return; }
+    if (wakingSince == null) { setWakingSince(Date.now()); return; }
+    const left = WAKING_TIMEOUT_MS - (Date.now() - wakingSince);
+    const id = setTimeout(() => {
+      setLastFailure(t('No picture came through. Check that this device can reach the server, then retry.'));
+      setConn('error');
+    }, Math.max(0, left));
+    return () => clearTimeout(id);
+  }, [phase, attempt, mode, wakingSince]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const takeControl = () => {
     if (variant === 'panel' && !fullscreen) onExpand?.('control');
     else setMode('control');
@@ -192,6 +258,19 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       <div className="screen__body">
         <div className="screen__view" style={{ aspectRatio: `${width} / ${height}` }}>
           <div ref={canvasRef} className="screen__canvas" />
+          {pictures && wantLive && (
+            <img
+              className="screen__picture"
+              alt={t('{name}’s screen', { name: bot.name })}
+              src={`/api/bots/${bot.id}/screenshot?n=${shot}`}
+              onLoad={() => { hadFrame.current = true; setLastFailure(null); setConn('connected'); scheduleShot(PICTURE_EVERY_MS); }}
+              onError={() => scheduleShot(PICTURE_EVERY_MS * 2)}
+              draggable={false}
+            />
+          )}
+          {pictures && wantLive && driving && conn === 'connected' && (
+            <TouchDrive botId={bot.id} keysRef={keysRef} onSent={afterInput} onError={inputFailed} />
+          )}
           {/* noVNC swallows clicks on its canvas, so the way into the large view is a button laid over it. */}
           {expandable && <button type="button" className="screen__expand" onClick={() => onExpand?.('watch')} aria-label={t('Open {name}’s computer in the large view', { name: bot.name })} title={t('Open the large view')} />}
 
@@ -241,7 +320,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
               <span className="screen__text">
                 {!running ? t('Couldn’t wake {name}’s computer', { name: bot.name }) : conn === 'disconnected' ? t('The screen disconnected') : t('Couldn’t reach {name}’s screen', { name: bot.name })}
               </span>
-              {(wakeError || (status === 'error' && computer?.error)) && <span className="screen__sub">{wakeError ?? computer?.error}</span>}
+              {(wakeError || (status === 'error' && computer?.error) || lastFailure) && <span className="screen__sub">{wakeError ?? (status === 'error' ? computer?.error : null) ?? lastFailure}</span>}
               {running && screensFull(computer, bot.id) && <span className="screen__sub">{t('All {n} screens are in use. Reset one in Settings to free it.', { n: computer?.maxScreens ?? 0 })}</span>}
               <button type="button" className="screen__action" onClick={retry}>{t('Retry')}</button>
             </div>
@@ -280,9 +359,14 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
           <div className="screen__chin">
             <span className="screen__chin-text" role="status">
               <i className="screen__ping" aria-hidden />
-              <span>{hint || t('You’re driving')}</span>
+              <span>{note || hint || t('You’re driving')}</span>
             </span>
             <span className="screen__chin-actions">
+              {pictures && (
+                <button type="button" className="screen__chin-icon" onClick={() => focusKeys(keysRef.current)} aria-label={t('Keyboard')} title={t('Keyboard')}>
+                  <Icon name="edit" size={15} />
+                </button>
+              )}
               {canFullscreen && (
                 <button type="button" className="screen__chin-icon" onClick={toggleFullscreen} aria-label={fullscreen ? t('Leave full screen') : t('Full screen')} title={fullscreen ? t('Leave full screen') : t('Full screen')}>
                   <Icon name={fullscreen ? 'shrink' : 'expand'} size={15} />

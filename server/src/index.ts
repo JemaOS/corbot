@@ -38,8 +38,18 @@ app.route('/api', configApi);
 // Serve the built web app in production.
 const webDist = path.resolve(new URL('.', import.meta.url).pathname, '../../web/dist');
 if (fs.existsSync(webDist)) {
-  app.use('/*', serveStatic({ root: path.relative(process.cwd(), webDist) }));
-  app.get('*', (c) => c.html(fs.readFileSync(path.join(webDist, 'index.html'), 'utf8')));
+  app.use('/*', serveStatic({
+    root: path.relative(process.cwd(), webDist),
+    // The HTML must never be cached: after an update a phone that keeps the old page asks for chunks
+    // that no longer exist and shows nothing. Hashed assets can be kept for a year.
+    onFound: (_path, c) => {
+      c.header('Cache-Control', _path.endsWith('.html') || _path === webDist ? 'no-store' : 'public, max-age=31536000, immutable');
+    },
+  }));
+  app.get('*', (c) => {
+    c.header('Cache-Control', 'no-store');
+    return c.html(fs.readFileSync(path.join(webDist, 'index.html'), 'utf8'));
+  });
 }
 
 const server = serve({ fetch: app.fetch, port: env.port, ...(env.host ? { hostname: env.host } : {}) }, (info) => console.log(`[corbot] server on http://localhost:${info.port}`));

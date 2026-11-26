@@ -11,7 +11,7 @@ import { emitBot, getBotRow, listRoutines, listTasks } from './store.js';
 import { computerState, readyScreen, resetBotScreen } from './computer.js';
 import { box } from './box.js';
 import { openTerminal } from './desk.js';
-import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, setProviderKey, stopOwnScreen } from './engine.js';
+import { configProvider, engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, setProviderKey, stopOwnScreen } from './engine.js';
 import { contextUse, listMemories } from './engine-memory.js';
 import { idleConfig, viewerCount } from './idle.js';
 import type { LibraryFile, Skill } from './types.js';
@@ -129,7 +129,15 @@ configApi.patch('/bots/:id/engine', async (c) => {
   const p = await c.req.json<{ provider?: string | null; model?: string | null }>().catch(() => ({} as { provider?: string | null; model?: string | null }));
   const clean = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : null);
   if (p.provider !== undefined) db.prepare('UPDATE bots SET provider=?, updated_at=? WHERE id=?').run(clean(p.provider), now(), b.id);
-  if (p.model !== undefined) db.prepare('UPDATE bots SET model=?, updated_at=? WHERE id=?').run(clean(p.model), now(), b.id);
+  if (p.model !== undefined) {
+    db.prepare('UPDATE bots SET model=?, updated_at=? WHERE id=?').run(clean(p.model), now(), b.id);
+    // Hermes ignores an explicit model unless a provider is sent too. When only the model changes and
+    // none is stored yet, persist the bot's config provider so the next turn actually uses that model.
+    if (p.provider === undefined && !b.provider) {
+      const prov = configProvider(b.id);
+      if (prov) db.prepare('UPDATE bots SET provider=?, updated_at=? WHERE id=?').run(prov, now(), b.id);
+    }
+  }
   emitBot(b.id);
   return c.json({ engine: await engineInfo(b.id) });
 });

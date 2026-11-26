@@ -156,6 +156,30 @@ addColumn('bots', 'handback_at', 'INTEGER');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
 
+// One bot holds a screen; two bots must never share one. Existing duplicates (a lease that raced a
+// restart, before the write was guarded) are spread onto free or new screens first, so the unique
+// index below can be created on any database.
+{
+  const rows = db.prepare('SELECT bot_id, user_id, screen_id FROM screens ORDER BY last_used_at ASC').all() as { bot_id: string; user_id: string; screen_id: string }[];
+  const seen = new Set<string>();
+  const move = db.prepare('UPDATE screens SET screen_id=? WHERE bot_id=?');
+  for (const r of rows) {
+    if (!seen.has(r.screen_id)) { seen.add(r.screen_id); continue; }
+    const free = nextFreeScreenId(seen);
+    move.run(free, r.bot_id);
+    seen.add(free);
+  }
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS screens_one_bot_per_screen ON screens(screen_id)');
+
+/** The next screen id (`screen-N`) no bot holds, starting after :99. */
+function nextFreeScreenId(seen: Set<string>): string {
+  for (let n = 100; ; n++) {
+    const id = `screen-${n}`;
+    if (!seen.has(id)) return id;
+  }
+}
+
 export const now = () => Date.now();
 
 // Bots made before the current bodies keep their place: each old shape name becomes the closest new one.

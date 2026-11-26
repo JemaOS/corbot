@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import { cdpPortFor } from './desk.js';
 import { env } from './env.js';
+import { chromeFocusTakesText, textCursorAt } from './screen-focus.js';
 
 /**
  * The screens of the computer the bots work on. Every screen is an X display of this machine with
@@ -14,6 +16,16 @@ const DEFAULT_DISPLAY = 99;
 const FIRST_EXTRA_DISPLAY = 100;
 
 /** Screen id -> X display number. 'default' is :99, 'screen-100' is :100. */
+/** One gesture or keystroke sent from a phone to a bot's screen. */
+export type ScreenInput =
+  | { type: 'tap'; x: number; y: number; button?: 1 | 3 }
+  | { type: 'scroll'; x: number; y: number; dy: number }
+  | { type: 'text'; text: string }
+  | { type: 'key'; key: string; repeat?: number };
+
+/** The keys a phone sends as keys rather than text. */
+export const INPUT_KEYS = new Set(['Return', 'BackSpace', 'Delete', 'Tab', 'Escape', 'Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Page_Up', 'Page_Down']);
+
 export const displayNumberOf = (screenId: string) => (screenId === 'default' ? DEFAULT_DISPLAY : Number(screenId.replace('screen-', '')));
 const idOf = (n: number) => (n === DEFAULT_DISPLAY ? 'default' : `screen-${n}`);
 
@@ -27,6 +39,8 @@ function run(cmd: string, args: string[], opts: { display?: number; timeoutMs?: 
     }, (err, stdout) => resolve({ code: err ? (typeof (err as any).code === 'number' ? (err as any).code : 1) : 0, out: stdout as unknown as Buffer }));
   });
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const socketOf = (n: number) => `/tmp/.X11-unix/X${n}`;
 const isOurs = (n: number) => n === DEFAULT_DISPLAY || n >= FIRST_EXTRA_DISPLAY;
@@ -96,6 +110,55 @@ export const screens = {
     const r = await run('import', ['-silent', '-window', 'root', '-quality', '75', 'jpeg:-'], { display: displayNumberOf(screenId), timeoutMs: 10_000 });
     if (r.code !== 0 || !r.out.length) throw new Error(`could not take a picture of screen ${screenId}`);
     return { data: r.out, mime: 'image/jpeg' };
+  },
+
+  /**
+   * Touch and keyboard from a phone, played on the screen with xdotool. Coordinates are screen pixels.
+   * Keys are limited to the editing and navigation keys a phone keyboard cannot type as text.
+   */
+  async input(screenId: string, a: ScreenInput): Promise<{ keyboard?: boolean }> {
+    const display = displayNumberOf(screenId);
+    const x = (v: number) => String(Math.max(0, Math.round(v)));
+    const xdo = async (args: string[]) => {
+      const r = await run('xdotool', args, { display, timeoutMs: 15_000 });
+      if (r.code !== 0) throw new Error(`xdotool failed on screen ${screenId}`);
+    };
+    let args: string[];
+    switch (a.type) {
+      case 'tap': {
+        if (a.button === 3) {
+          await xdo(['mousemove', x(a.x), x(a.y), 'click', '3']);
+          return { keyboard: false };
+        }
+        // Point first, so the application under the finger shows its own cursor, and read it; then click
+        // and ask Chrome what took the focus. (No --sync on mousemove: a second tap on the same spot
+        // never moves the pointer and would wait for nothing.)
+        await xdo(['mousemove', x(a.x), x(a.y)]);
+        await sleep(120);
+        const textCursor = await textCursorAt(display);
+        await xdo(['click', '1']);
+        await sleep(180);
+        const chrome = await chromeFocusTakesText(cdpPortFor(screenId));
+        return { keyboard: chrome ?? textCursor };
+      }
+      case 'scroll': {
+        const n = Math.min(20, Math.max(1, Math.round(Math.abs(a.dy))));
+        args = ['mousemove', x(a.x), x(a.y), 'click', '--repeat', String(n), '--delay', '15', a.dy > 0 ? '5' : '4'];
+        break;
+      }
+      case 'text':
+        if (!a.text) return {};
+        args = ['type', '--delay', '8', '--clearmodifiers', '--', a.text.slice(0, 2000)];
+        break;
+      case 'key': {
+        if (!INPUT_KEYS.has(a.key)) throw new Error(`key not allowed: ${a.key}`);
+        const n = Math.min(200, Math.max(1, Math.round(a.repeat ?? 1)));
+        args = ['key', '--clearmodifiers', '--repeat', String(n), '--delay', '10', a.key];
+        break;
+      }
+    }
+    await xdo(args);
+    return {};
   },
 
   /** Where the VNC server of this screen listens. */

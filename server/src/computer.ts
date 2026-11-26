@@ -111,20 +111,26 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
     }
   }
 
-  const taken = new Set((db.prepare('SELECT screen_id FROM screens').all() as any[]).map((r) => r.screen_id as string));
+  const taken = () => new Set((db.prepare('SELECT screen_id FROM screens WHERE bot_id<>?').all(botId) as any[]).map((r) => r.screen_id as string));
   const existing = await screens.list();
   let screen: Screen | undefined;
   if (isPrimaryEngine(botId)) {
     screen = existing.find((s) => s.id === 'default' || s.default) ?? ({ id: 'default', display: ':99', width: 0, height: 0, default: true } as Screen);
     screen = { ...screen, id: 'default' };
   } else {
-    screen = existing.find((s) => s.id !== 'default' && !s.default && !taken.has(s.id));
+    // A screen another bot holds is not a candidate; a refused write (a lease raced us) means trying
+    // again rather than sharing.
+    const busy = taken();
+    screen = existing.find((s) => s.id !== 'default' && !s.default && !busy.has(s.id));
     if (!screen) {
       if (existing.length >= MAX_SCREENS) throw new Error(`Every screen on the computer is in use (${MAX_SCREENS} at most). Remove a bot to free one.`);
       screen = await screens.create();
     }
   }
-  db.prepare('INSERT OR REPLACE INTO screens(bot_id,user_id,screen_id,last_used_at,width,height) VALUES (?,?,?,?,?,?)').run(botId, userId, screen.id, now(), screen.width || null, screen.height || null);
+  // `INSERT OR REPLACE` replaces on the primary key only: it happily wrote a second bot onto a screen
+  // another one already held. The write must fail when the screen is taken, and the next screen is
+  // then tried instead.
+  db.prepare('INSERT INTO screens(bot_id,user_id,screen_id,last_used_at,width,height) VALUES (?,?,?,?,?,?) ON CONFLICT(bot_id) DO UPDATE SET user_id=excluded.user_id, screen_id=excluded.screen_id, last_used_at=excluded.last_used_at, width=excluded.width, height=excluded.height').run(botId, userId, screen.id, now(), screen.width || null, screen.height || null);
   verified.set(botId, Date.now());
   hub.emit(userId, { type: 'computer', state: computerState(userId) });
   return { computerId: id, screenId: screen.id, width: screen.width || undefined, height: screen.height || undefined };

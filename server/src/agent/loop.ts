@@ -5,7 +5,7 @@ import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } fr
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
-import { engineFor } from '../engine.js';
+import { configProvider, engineFor } from '../engine.js';
 import { instructionsFor } from './prompt.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 
@@ -367,7 +367,9 @@ async function runTurn(botId: string, trigger: Trigger) {
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(engine.key ? { authorization: `Bearer ${engine.key}` } : {}) },
       body: JSON.stringify({
         model: bot.model || 'hermes-agent',
-        ...(bot.provider ? { provider: bot.provider } : {}),
+        // Hermes only applies an explicit model when a provider rides along; fall back to the bot's
+        // config provider so a per-bot model change is never silently ignored.
+        ...((bot.provider || configProvider(botId)) ? { provider: bot.provider || configProvider(botId) } : {}),
         input,
         instructions: await instructionsFor(userId, botId),
         // One engine-side thread per conversation; "New chat" bumps the generation and starts another.

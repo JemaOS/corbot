@@ -12,7 +12,7 @@ import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
-import { screens } from './screens.js';
+import { screens, INPUT_KEYS, type ScreenInput } from './screens.js';
 import { catalog, composioOn, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
@@ -416,6 +416,48 @@ api.get('/bots/:id/screenshot', async (c) => {
     return c.body(new Uint8Array(s.data), 200, { 'Content-Type': s.mime, 'Cache-Control': 'no-store' });
   } catch {
     return c.body(null, 204);
+  }
+});
+
+/**
+ * Touch and keyboard from a phone, for the person driving a bot's screen through pictures. Positions
+ * come as fractions of the picture (0..1) and are turned into the screen's pixels here. Inputs for one
+ * bot are played one after the other, in the order they were sent.
+ */
+const inputQueues = new Map<string, Promise<unknown>>();
+api.post('/bots/:id/input', async (c) => {
+  const user = c.get('user');
+  const b = ownBot(user.id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const scr = db.prepare('SELECT screen_id, width, height FROM screens WHERE bot_id=?').get(b.id) as any;
+  if (computerState(user.id).status !== 'running' || !scr) return c.json({ error: 'The screen is not open.' }, 409);
+  const body = (await c.req.json().catch(() => null)) as any;
+  const w = Number(scr.width) || 1440;
+  const h = Number(scr.height) || 900;
+  const fx = (v: unknown) => Math.min(1, Math.max(0, Number(v) || 0)) * (w - 1);
+  const fy = (v: unknown) => Math.min(1, Math.max(0, Number(v) || 0)) * (h - 1);
+  let action: ScreenInput;
+  switch (body?.type) {
+    case 'tap': action = { type: 'tap', x: fx(body.x), y: fy(body.y), button: body.button === 3 ? 3 : 1 }; break;
+    case 'scroll': action = { type: 'scroll', x: fx(body.x), y: fy(body.y), dy: Number(body.dy) || 0 }; break;
+    case 'text': action = { type: 'text', text: String(body.text ?? '') }; break;
+    case 'key':
+      if (!INPUT_KEYS.has(String(body.key))) return c.json({ error: 'key not allowed' }, 400);
+      action = { type: 'key', key: String(body.key), repeat: Number(body.repeat) || 1 };
+      break;
+    default: return c.json({ error: 'unknown input' }, 400);
+  }
+  const prev = inputQueues.get(b.id) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(() => screens.input(scr.screen_id, action));
+  inputQueues.set(b.id, next);
+  try {
+    const done = await next;
+    // For a tap: whether the spot takes text, so the phone opens its keyboard only where one types.
+    return c.json({ ok: true, ...(done.keyboard !== undefined ? { keyboard: done.keyboard } : {}) });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? e) }, 500);
+  } finally {
+    if (inputQueues.get(b.id) === next) inputQueues.delete(b.id);
   }
 });
 
