@@ -144,3 +144,11 @@
 /* Picture mode (phones, tablets): the screen as a picture refreshed in place, scaled like the stream. */
 .screen__picture { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .screen:not(.is-live) .screen__picture { visibility: hidden; }
+
+/* Driving through pictures on a phone: the layer takes every touch (no page scroll or zoom under it),
+   and the keyboard field stays off screen but focusable, so the phone keyboard can type. */
+.screen__touch { position: absolute; inset: 0; touch-action: none; -webkit-touch-callout: none; user-select: none; cursor: pointer; }
+.screen__keys {
+  position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; padding: 0; border: 0; margin: 0;
+  opacity: 0; resize: none; overflow: hidden; caret-color: transparent; font-size: 16px; /* 16px: no zoom on focus */
+}

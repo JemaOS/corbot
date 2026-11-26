@@ -14,6 +14,16 @@ const DEFAULT_DISPLAY = 99;
 const FIRST_EXTRA_DISPLAY = 100;
 
 /** Screen id -> X display number. 'default' is :99, 'screen-100' is :100. */
+/** One gesture or keystroke sent from a phone to a bot's screen. */
+export type ScreenInput =
+  | { type: 'tap'; x: number; y: number; button?: 1 | 3 }
+  | { type: 'scroll'; x: number; y: number; dy: number }
+  | { type: 'text'; text: string }
+  | { type: 'key'; key: string; repeat?: number };
+
+/** The keys a phone sends as keys rather than text. */
+export const INPUT_KEYS = new Set(['Return', 'BackSpace', 'Delete', 'Tab', 'Escape', 'Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Page_Up', 'Page_Down']);
+
 export const displayNumberOf = (screenId: string) => (screenId === 'default' ? DEFAULT_DISPLAY : Number(screenId.replace('screen-', '')));
 const idOf = (n: number) => (n === DEFAULT_DISPLAY ? 'default' : `screen-${n}`);
 
@@ -96,6 +106,39 @@ export const screens = {
     const r = await run('import', ['-silent', '-window', 'root', '-quality', '75', 'jpeg:-'], { display: displayNumberOf(screenId), timeoutMs: 10_000 });
     if (r.code !== 0 || !r.out.length) throw new Error(`could not take a picture of screen ${screenId}`);
     return { data: r.out, mime: 'image/jpeg' };
+  },
+
+  /**
+   * Touch and keyboard from a phone, played on the screen with xdotool. Coordinates are screen pixels.
+   * Keys are limited to the editing and navigation keys a phone keyboard cannot type as text.
+   */
+  async input(screenId: string, a: ScreenInput): Promise<void> {
+    const display = displayNumberOf(screenId);
+    const x = (v: number) => String(Math.max(0, Math.round(v)));
+    let args: string[];
+    switch (a.type) {
+      case 'tap':
+        // No --sync: it waits for the pointer to move, and a second tap on the same spot never moves it.
+        args = ['mousemove', x(a.x), x(a.y), 'click', a.button === 3 ? '3' : '1'];
+        break;
+      case 'scroll': {
+        const n = Math.min(20, Math.max(1, Math.round(Math.abs(a.dy))));
+        args = ['mousemove', x(a.x), x(a.y), 'click', '--repeat', String(n), '--delay', '15', a.dy > 0 ? '5' : '4'];
+        break;
+      }
+      case 'text':
+        if (!a.text) return;
+        args = ['type', '--delay', '8', '--clearmodifiers', '--', a.text.slice(0, 2000)];
+        break;
+      case 'key': {
+        if (!INPUT_KEYS.has(a.key)) throw new Error(`key not allowed: ${a.key}`);
+        const n = Math.min(200, Math.max(1, Math.round(a.repeat ?? 1)));
+        args = ['key', '--clearmodifiers', '--repeat', String(n), '--delay', '10', a.key];
+        break;
+      }
+    }
+    const r = await run('xdotool', args, { display, timeoutMs: 15_000 });
+    if (r.code !== 0) throw new Error(`xdotool failed on screen ${screenId}`);
   },
 
   /** Where the VNC server of this screen listens. */

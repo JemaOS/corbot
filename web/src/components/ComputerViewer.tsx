@@ -9,6 +9,7 @@ import { configApi } from '../lib/configApi';
 import { useT } from '../i18n';
 import { useSelectedBot, useStore } from '../store';
 import { Icon } from './Icon';
+import { TouchDrive, focusKeys } from './TouchDrive';
 
 export type ScreenMode = 'watch' | 'control';
 type Conn = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -82,6 +83,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   // it within a second, while plain HTTP works everywhere the rest of the app does.
   const pictures = usePictureMode();
   const [shot, setShot] = useState(0);
+  const keysRef = useRef<HTMLTextAreaElement>(null);
 
   const wake = useCallback(() => {
     setWaking(true); setWakeError(null);
@@ -169,6 +171,9 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
     }, ms);
   }, []);
   useEffect(() => () => { if (nextShot.current) clearTimeout(nextShot.current); }, []);
+  // After a tap or a keystroke the next picture is wanted now, not in 0.7 s.
+  const afterInput = useCallback(() => scheduleShot(120), [scheduleShot]);
+  const inputFailed = useCallback((m: string) => setNote(m || t('The screen did not take that.')), [t]);
   useEffect(() => { if (pictures && visible && wantLive) scheduleShot(0); }, [pictures, visible, wantLive, attempt, scheduleShot]);
 
   useEffect(() => { onModeChange?.(mode); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -263,6 +268,9 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
               draggable={false}
             />
           )}
+          {pictures && wantLive && driving && conn === 'connected' && (
+            <TouchDrive botId={bot.id} keysRef={keysRef} onSent={afterInput} onError={inputFailed} />
+          )}
           {/* noVNC swallows clicks on its canvas, so the way into the large view is a button laid over it. */}
           {expandable && <button type="button" className="screen__expand" onClick={() => onExpand?.('watch')} aria-label={t('Open {name}’s computer in the large view', { name: bot.name })} title={t('Open the large view')} />}
 
@@ -351,9 +359,14 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
           <div className="screen__chin">
             <span className="screen__chin-text" role="status">
               <i className="screen__ping" aria-hidden />
-              <span>{hint || t('You’re driving')}</span>
+              <span>{note || hint || t('You’re driving')}</span>
             </span>
             <span className="screen__chin-actions">
+              {pictures && (
+                <button type="button" className="screen__chin-icon" onClick={() => focusKeys(keysRef.current)} aria-label={t('Keyboard')} title={t('Keyboard')}>
+                  <Icon name="edit" size={15} />
+                </button>
+              )}
               {canFullscreen && (
                 <button type="button" className="screen__chin-icon" onClick={toggleFullscreen} aria-label={fullscreen ? t('Leave full screen') : t('Full screen')} title={fullscreen ? t('Leave full screen') : t('Full screen')}>
                   <Icon name={fullscreen ? 'shrink' : 'expand'} size={15} />

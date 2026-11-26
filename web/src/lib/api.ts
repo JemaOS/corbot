@@ -20,6 +20,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return res.json() as Promise<T>;
 }
 
+export type ScreenInput =
+  | { type: 'tap'; x: number; y: number; button?: 1 | 3 }
+  | { type: 'scroll'; x: number; y: number; dy: number }
+  | { type: 'text'; text: string }
+  | { type: 'key'; key: string; repeat?: number };
+
 export interface AppsResponse { apps: Toolkit[]; connected: string[]; categories: string[]; total: number }
 
 export interface RoomMember { id: string; name: string; label: string; avatarShape: string; avatarColor: string }
@@ -58,6 +64,8 @@ export const api = {
 
   computer: () => req<{ computer: ComputerState }>('GET', '/computer'),
   ensureComputer: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),
+  /** A tap, scroll, text or key from a phone, played on the bot's screen. x and y are fractions (0..1). */
+  screenInput: (botId: string, input: ScreenInput) => req<{ ok: true }>('POST', `/bots/${botId}/input`, input),
 
   apps: (search = '', category = '') => req<AppsResponse>('GET', `/apps?search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`),
   connect: (slug: string, botId?: string, seq?: number) => req<{ redirectUrl: string }>('POST', `/apps/${slug}/connect`, { botId, seq }),

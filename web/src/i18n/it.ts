@@ -603,6 +603,8 @@ const dict: Record<string, string> = {
   "The screen viewer could not start.": "Il visualizzatore dello schermo non è riuscito ad avviarsi.",
   "No picture came through. Check that this device can reach the server, then retry.": "Nessuna immagine è arrivata. Verifica che questo dispositivo raggiunga il server e riprova.",
   "{name}’s screen": "Schermo di {name}",
+  "The screen did not take that.": "Lo schermo non ha accettato questa azione.",
+  "Keyboard": "Tastiera",
 };
 
 export default dict;
