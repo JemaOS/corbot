@@ -58,6 +58,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   const [note, setNote] = useState<string | null>(null);
   // The last connection failure, so a screen that never shows a picture says why instead of spinning.
   const [lastFailure, setLastFailure] = useState<string | null>(null);
+  const [wakingSince, setWakingSince] = useState<number | null>(null);
 
   const status = computer?.status;
   const running = status === 'running';
@@ -96,6 +97,11 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   }, []);
 
   useEffect(() => {
+    // Leaving the live path (tab hidden, panel not opened, computer not running) must not look like a
+    // failure: a re-created effect used to reset the failure and the 15 s timer turned that into an
+    // error, even though the picture had been streaming.
+    setLastFailure(null);
+    setWakingSince(null);
     if (!wantLive || !canvasRef.current) { setConn('idle'); return; }
     hadFrame.current = false;
     setLastFailure(null);
@@ -170,15 +176,18 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   else if (conn === 'connected') phase = 'live';
   else phase = hadFrame.current ? 'switching' : 'waking';
 
-  // "Waking" is a wait, not a state: when nothing has come through after a while, say so.
+  // "Waking" is a wait, not a state: when nothing has come through after a while, say so. The wait is
+  // timed from one attempt, not restarted by every re-render the store can trigger.
   useEffect(() => {
-    if (phase !== 'waking') return;
+    if (phase !== 'waking') { setWakingSince(null); return; }
+    if (wakingSince == null) { setWakingSince(Date.now()); return; }
+    const left = WAKING_TIMEOUT_MS - (Date.now() - wakingSince);
     const id = setTimeout(() => {
       setLastFailure(t('No picture came through. Check that this device can reach the server, then retry.'));
       setConn('error');
-    }, WAKING_TIMEOUT_MS);
+    }, Math.max(0, left));
     return () => clearTimeout(id);
-  }, [phase, attempt, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phase, attempt, mode, wakingSince]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const takeControl = () => {
     if (variant === 'panel' && !fullscreen) onExpand?.('control');
