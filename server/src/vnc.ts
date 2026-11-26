@@ -177,7 +177,17 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const fwd = mode === 'watch' ? filter.feed(Buffer.from(data)) : Buffer.from(data);
     if (fwd.length && upstream?.open) upstream.send(fwd);
   });
-  client.on('close', () => { viewerClosed(userId); fromClient.close(new Error('client closed')); upstream?.close(); });
+  // Why and when the relay ends, once per session. A phone that gives up while the picture is being
+  // decoded shows up here as a close with its code, instead of a bare "client closed".
+  const openedAt = Date.now();
+  client.on('close', (code: number, reason: Buffer) => {
+    const ms = Date.now() - openedAt;
+    console.log(`[vnc] session closed after ${ms} ms (piping=${piping}) code=${code} reason=${reason?.toString() || '-'}`);
+    viewerClosed(userId);
+    fromClient.close(new Error('client closed'));
+    upstream?.close();
+  });
+  client.on('error', (e: Error) => console.warn('[vnc] client error', e.message));
   viewerOpened(userId); // keeps the computer awake while someone is watching (see idle.ts)
 
   const events: UpstreamEvents = {
