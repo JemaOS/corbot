@@ -243,9 +243,12 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const up = upstream;
 
     const serverInit = await upstreamHandshake(fromUp, (b) => up.send(b));
+    console.log(`[vnc] upstream ready ${botId} ${screenId} ${serverInit.readUInt16BE(0)}x${serverInit.readUInt16BE(2)}`);
     await browserHandshake(fromClient, (b) => client.send(b), serverInit);
+    console.log(`[vnc] browser handshake done ${botId}`);
     // Flush anything that arrived during the handshake, then switch to piping.
     piping = true;
+    console.log(`[vnc] piping ${botId}`);
     const leftoverUp = fromUp.takeAll();
     if (leftoverUp.length) client.send(leftoverUp);
     const leftoverClient = fromClient.takeAll();
