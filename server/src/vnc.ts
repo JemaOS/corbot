@@ -20,6 +20,9 @@ import { viewerClosed, viewerOpened } from './idle.js';
 interface Upstream {
   send(b: Buffer): void;
   close(): void;
+  /** Hold the screen back while the browser is still digesting what it has. */
+  pause(): void;
+  resume(): void;
   readonly open: boolean;
 }
 
@@ -36,7 +39,13 @@ function connectTcp(host: string, port: number, on: UpstreamEvents): Promise<Ups
     sock.on('error', (e) => { if (up) on.failed(e); else reject(e); });
     sock.once('connect', () => {
       up = true;
-      resolve({ send: (b) => { if (!sock.destroyed) sock.write(b); }, close: () => sock.destroy(), get open() { return !sock.destroyed; } });
+      resolve({
+        send: (b) => { if (!sock.destroyed) sock.write(b); },
+        close: () => sock.destroy(),
+        pause: () => { if (!sock.destroyed) sock.pause(); },
+        resume: () => { if (!sock.destroyed) sock.resume(); },
+        get open() { return !sock.destroyed; },
+      });
     });
   });
 }
@@ -117,6 +126,29 @@ async function browserHandshake(q: ByteQueue, send: (b: Buffer) => void, serverI
   send(serverInit);
 }
 
+/**
+ * Rewrites a client's SetEncodings, dropping H.264. Android Chrome offers it (WebCodecs is there) and
+ * then closes the socket within a second of the first frames, while the same session runs for minutes
+ * on a desktop that does not offer it. Tight and JPEG are decoded in JavaScript and behave the same
+ * everywhere, so the screen is asked for those instead.
+ */
+function withoutH264(b: Buffer): Buffer {
+  if (b.length < 4 || b[0] !== 2) return b;
+  const n = b.readUInt16BE(2);
+  if (b.length < 4 + 4 * n) return b;
+  const keep: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const e = b.readInt32BE(4 + 4 * i);
+    if (e !== 50) keep.push(e);
+  }
+  if (keep.length === n) return b;
+  const out = Buffer.alloc(4 + 4 * keep.length);
+  out.writeUInt8(2, 0);
+  out.writeUInt16BE(keep.length, 2);
+  keep.forEach((e, i) => out.writeInt32BE(e, 4 + 4 * i));
+  return out;
+}
+
 /** Filters a client->server RFB stream, dropping input events. Returns bytes to forward. */
 class WatchFilter {
   private pending = Buffer.alloc(0);
@@ -131,7 +163,8 @@ class WatchFilter {
       if (len === 0 || b.length < len) break; // need more bytes
       const msg = b.subarray(0, len);
       const t = b[0];
-      if (t !== 4 && t !== 5 && t !== 6) out.push(Buffer.from(msg));
+      if (t === 2) out.push(withoutH264(Buffer.from(msg)));
+      else if (t !== 4 && t !== 5 && t !== 6) out.push(Buffer.from(msg));
       this.pending = b.subarray(len);
     }
     return Buffer.concat(out);
@@ -196,8 +229,6 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   let downBytes = 0;
   let lastClientMsg = -1;
   let frames = 0;
-  const prevSocket = clientSocket;
-  client.on('message', () => { /* counted below, after the filter */ });
   clientSocket?.on('data', (d: Buffer) => { upBytes += d.length; });
   const origSend = client.send.bind(client);
   (client as unknown as { send: typeof client.send }).send = ((data: unknown, opts?: unknown, cb?: unknown) => {
@@ -216,7 +247,8 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   client.on('pong', () => { /* alive */ });
   client.on('close', () => {
     clearInterval(watchdog);
-    console.log(`[vnc] flow up=${upBytes} down=${downBytes} lastClientMsg=${lastClientMsg} frames=${frames}`);
+    clearInterval(drainer);
+    console.log(`[vnc] flow up=${upBytes} down=${downBytes} lastClientMsg=${lastClientMsg} frames=${frames} peakBuffered=${peakBuffered} held=${held}`);
   });
 
   client.on('message', (data: Buffer) => {
@@ -224,7 +256,8 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     const b = Buffer.from(data);
     if (b.length) lastClientMsg = b[0];
     if (b.length && b[0] === 3) frames++;
-    const fwd = mode === 'watch' ? filter.feed(Buffer.from(data)) : Buffer.from(data);
+    const raw = Buffer.from(data);
+    const fwd = mode === 'watch' ? filter.feed(raw) : (raw.length && raw[0] === 2 ? withoutH264(raw) : raw);
     if (fwd.length && upstream?.open) upstream.send(fwd);
   });
   // Why and when the relay ends, once per session. A phone that gives up while the picture is being
@@ -240,10 +273,30 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   client.on('error', (e: Error) => console.warn('[vnc] client error', e.message));
   viewerOpened(userId); // keeps the computer awake while someone is watching (see idle.ts)
 
+  // Backpressure. The screen produces a full frame far faster than a phone on a tailnet link can take
+  // it; forwarding blindly piled a megabyte into the socket and the session died within a second. The
+  // screen is now held whenever the browser is behind, and let go once it has caught up.
+  const HIGH_WATER = 128 * 1024;
+  const LOW_WATER = 32 * 1024;
+  let held = false;
+  let peakBuffered = 0;
+  const release = () => {
+    if (!held || !upstream?.open) return;
+    if ((clientSocket?.writableLength ?? 0) + client.bufferedAmount <= LOW_WATER) { held = false; upstream.resume(); }
+  };
+  const drainer = setInterval(release, 25);
+  clientSocket?.on('drain', release);
+
   const events: UpstreamEvents = {
     data: (d) => {
       if (!piping) return fromUp.push(d);
-      if (client.readyState === WebSocket.OPEN) client.send(d, { binary: true });
+      if (client.readyState !== WebSocket.OPEN) return;
+      client.send(d, { binary: true });
+      // `bufferedAmount` stays near zero: ws hands the bytes to the socket at once. What actually
+      // piles up on a slow link is the socket's own write queue, so that is what is watched.
+      const queued = (clientSocket?.writableLength ?? 0) + client.bufferedAmount;
+      peakBuffered = Math.max(peakBuffered, queued);
+      if (!held && queued > HIGH_WATER && upstream?.open) { held = true; upstream.pause(); }
     },
     closed: (why) => { fromUp.close(new Error(`upstream closed ${why}`)); closeAll(1000, `upstream ${why}`); },
     failed: (e) => { fromUp.close(e); closeAll(1011, String(e)); },
@@ -279,7 +332,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     if (leftoverUp.length) client.send(leftoverUp);
     const leftoverClient = fromClient.takeAll();
     if (leftoverClient.length) {
-      const fwd = mode === 'watch' ? filter.feed(leftoverClient) : leftoverClient;
+      const fwd = mode === 'watch' ? filter.feed(leftoverClient) : (leftoverClient.length && leftoverClient[0] === 2 ? withoutH264(leftoverClient) : leftoverClient);
       if (fwd.length) up.send(fwd);
     }
   } catch (e: any) {
