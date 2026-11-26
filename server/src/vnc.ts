@@ -67,6 +67,21 @@ class ByteQueue {
 
 const u32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
 
+/** SetPixelFormat: the 32-bit true-colour format noVNC decodes (little-endian, shifts 0/8/16). */
+const DEFAULT_PIXEL_FORMAT = Buffer.from([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0]);
+
+/** SetEncodings: compressed encodings first, raw last, medium JPEG quality, desktop-size updates. */
+const DEFAULT_ENCODINGS = (() => {
+  // No desktop-size pseudo-encodings here: advertising them makes the screen answer the first
+  // request with a layout rectangle and no picture, which a client that asks only once never recovers
+  // from. The browser's own SetEncodings, when it sends one, still takes over.
+  const encs = [1, 7, -260, 16, 5, 2, 6, 0, -32 + 6, -256 + 6];
+  const b = Buffer.alloc(4 + 4 * encs.length);
+  b.writeUInt8(2, 0); b.writeUInt16BE(encs.length, 2);
+  encs.forEach((e, i) => b.writeInt32BE(e, 4 + 4 * i));
+  return b;
+})();
+
 async function upstreamHandshake(q: ByteQueue, send: (b: Buffer) => void): Promise<Buffer> {
   await q.read(12); // server ProtocolVersion
   send(Buffer.from('RFB 003.008\n'));
@@ -249,6 +264,17 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     // Flush anything that arrived during the handshake, then switch to piping.
     piping = true;
     console.log(`[vnc] piping ${botId}`);
+    // Ask the screen for compressed pictures ourselves. Some browsers (seen on Android Chrome) never
+    // send their own pixel format and encodings, and the screen then answers with raw pixels: 5 MB per
+    // full frame, which a phone cannot take. The browser's own messages, when they come, override this.
+    up.send(DEFAULT_PIXEL_FORMAT);
+    up.send(DEFAULT_ENCODINGS);
+    // And ask for the whole picture now, so a client that only asks once still receives one.
+    const ask = Buffer.alloc(10);
+    ask.writeUInt8(3, 0);
+    ask.writeUInt16BE(serverInit.readUInt16BE(0), 4);
+    ask.writeUInt16BE(serverInit.readUInt16BE(2), 6);
+    up.send(ask);
     const leftoverUp = fromUp.takeAll();
     if (leftoverUp.length) client.send(leftoverUp);
     const leftoverClient = fromClient.takeAll();
