@@ -117,9 +117,12 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       rfb.viewOnly = mode === 'watch';
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
-      // Sharp text and little compression work: right for a screen on this machine or a fast link.
-      rfb.qualityLevel = 8;
-      rfb.compressionLevel = 1;
+      // Sharp text and little compression work on a fast link. A phone over a tailnet gets the same
+      // picture with far fewer bytes: the first full frame is what stalls there, so it is made cheap
+      // and the link decides the rest.
+      const small = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+      rfb.qualityLevel = small ? 4 : 8;
+      rfb.compressionLevel = small ? 6 : 1;
       rfb.background = 'transparent';
       rfb.focusOnClick = mode === 'control';
       rfb.addEventListener('connect', () => { if (!disposed) { hadFrame.current = true; setConn('connected'); if (mode === 'control') rfb?.focus(); } });
