@@ -602,6 +602,7 @@ const dict: Record<string, string> = {
   "The screen refused the session.": "Der Bildschirm hat die Sitzung abgelehnt.",
   "The screen viewer could not start.": "Die Bildschirmanzeige konnte nicht starten.",
   "No picture came through. Check that this device can reach the server, then retry.": "Es ist kein Bild angekommen. Prüfe, ob dieses Gerät den Server erreicht, und versuche es erneut.",
+  "{name}’s screen": "Bildschirm von {name}",
 };
 
 export default dict;

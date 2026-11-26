@@ -12,6 +12,15 @@ import { Icon } from './Icon';
 
 export type ScreenMode = 'watch' | 'control';
 type Conn = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
+/** Picture mode: the pause between two pictures once one has arrived. */
+const PICTURE_EVERY_MS = 700;
+
+/** True on touch-first devices (phones, tablets), where the screen is watched through pictures. */
+function usePictureMode(): boolean {
+  const [on] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches);
+  return on;
+}
+
 /** How long "waking" may last before it is reported as a failure instead of a spinner. */
 const WAKING_TIMEOUT_MS = 15_000;
 
@@ -69,6 +78,10 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   const large = variant === 'stage' || fullscreen;
   // The small panel view only streams a screen that already exists, so browsing bots never uses up screens.
   const wantLive = running && !paused && (variant === 'stage' || visible) && (opened || hasScreen);
+  // Phones and tablets watch through pictures: the live stream reaches them but their browser drops
+  // it within a second, while plain HTTP works everywhere the rest of the app does.
+  const pictures = usePictureMode();
+  const [shot, setShot] = useState(0);
 
   const wake = useCallback(() => {
     setWaking(true); setWakeError(null);
@@ -103,6 +116,7 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
     setLastFailure(null);
     setWakingSince(null);
     if (!wantLive || !canvasRef.current) { setConn('idle'); return; }
+    if (pictures) { setConn('connecting'); return; }
     hadFrame.current = false;
     setLastFailure(null);
     let disposed = false;
@@ -142,7 +156,20 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       rfbRef.current = null;
       el.innerHTML = '';
     };
-  }, [bot.id, wantLive, mode, attempt]);
+  }, [bot.id, wantLive, mode, attempt, pictures]);
+
+  // Picture mode: the next picture is asked for only once the previous one has arrived (or failed), so
+  // a slow link finishes each picture instead of restarting it; nothing is asked while the tab is hidden.
+  const nextShot = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleShot = useCallback((ms: number) => {
+    if (nextShot.current) clearTimeout(nextShot.current);
+    nextShot.current = setTimeout(() => {
+      nextShot.current = null;
+      if (document.visibilityState === 'visible') setShot((n) => n + 1);
+    }, ms);
+  }, []);
+  useEffect(() => () => { if (nextShot.current) clearTimeout(nextShot.current); }, []);
+  useEffect(() => { if (pictures && visible && wantLive) scheduleShot(0); }, [pictures, visible, wantLive, attempt, scheduleShot]);
 
   useEffect(() => { onModeChange?.(mode); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -226,6 +253,16 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       <div className="screen__body">
         <div className="screen__view" style={{ aspectRatio: `${width} / ${height}` }}>
           <div ref={canvasRef} className="screen__canvas" />
+          {pictures && wantLive && (
+            <img
+              className="screen__picture"
+              alt={t('{name}’s screen', { name: bot.name })}
+              src={`/api/bots/${bot.id}/screenshot?n=${shot}`}
+              onLoad={() => { hadFrame.current = true; setLastFailure(null); setConn('connected'); scheduleShot(PICTURE_EVERY_MS); }}
+              onError={() => scheduleShot(PICTURE_EVERY_MS * 2)}
+              draggable={false}
+            />
+          )}
           {/* noVNC swallows clicks on its canvas, so the way into the large view is a button laid over it. */}
           {expandable && <button type="button" className="screen__expand" onClick={() => onExpand?.('watch')} aria-label={t('Open {name}’s computer in the large view', { name: bot.name })} title={t('Open the large view')} />}
 

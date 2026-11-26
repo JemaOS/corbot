@@ -140,3 +140,7 @@
    scaled frame would leave the picture slightly too small until the next resize. */
 .viewer__stage .screen__body { pointer-events: auto; animation: rise 200ms var(--ease-out); }
 @media (prefers-reduced-motion: reduce) { .viewer__stage .screen__body { animation: none; } }
+
+/* Picture mode (phones, tablets): the screen as a picture refreshed in place, scaled like the stream. */
+.screen__picture { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.screen:not(.is-live) .screen__picture { visibility: hidden; }
