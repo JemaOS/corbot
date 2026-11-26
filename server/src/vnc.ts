@@ -328,6 +328,14 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     }
   };
 
+  // Every byte the browser receives, on one line: the socket can be closed by the proxy, by the
+  // phone, or by our own code, and only the TCP events say which.
+  const sock = clientSocket;
+  sock?.on('error', (e: Error) => console.warn('[vnc] sock error', e.message));
+  sock?.on('end', () => console.log('[vnc] sock end (pair sent FIN)'));
+  sock?.on('close', (hadError: boolean) => console.log(`[vnc] sock close hadError=${hadError} written=${sock.bytesWritten} read=${sock.bytesRead}`));
+  client.on('error', (e: Error) => console.warn('[vnc] ws error', e.message));
+
   const events: UpstreamEvents = {
     data: (d) => {
       seeUpstream(d);
@@ -341,6 +349,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
       // piles up on a slow link is the socket's own write queue, so that is what is watched.
       const queued = (clientSocket?.writableLength ?? 0) + client.bufferedAmount;
       peakBuffered = Math.max(peakBuffered, queued);
+      if (queued > HIGH_WATER * 4) console.warn(`[vnc] queue ${queued} bytes, wsState=${client.readyState}`);
       if (!held && queued > HIGH_WATER && upstream?.open) { held = true; upstream.pause(); }
     },
     closed: (why) => { fromUp.close(new Error(`upstream closed ${why}`)); closeAll(1000, `upstream ${why}`); },
