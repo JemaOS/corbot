@@ -610,6 +610,7 @@ const dict: Record<string, string> = {
   "Enter": "Eintreten",
   "Wrong password.": "Falsches Passwort.",
   "Too many attempts. Try again in a few minutes.": "Zu viele Versuche. Versuche es in ein paar Minuten erneut.",
+  "This app is private. Enter its access password to continue.": "Diese App ist privat. Gib ihr Zugangspasswort ein, um fortzufahren.",
 };
 
 export default dict;

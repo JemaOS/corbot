@@ -8,25 +8,12 @@ import { LanguagePicker } from './LanguagePicker';
 export function SignIn() {
   const t = useT();
   const devLogin = useStore((s) => s.devLogin);
-  const passwordLogin = useStore((s) => s.passwordLogin);
   const googleLogin = useStore((s) => s.googleLogin);
   const checkAuth = useStore((s) => s.checkAuth);
-  const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(() => (new URLSearchParams(location.search).get('login') === 'failed' ? t('Sign-in didn’t finish. Try again.') : null));
-
-  const withPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!password) { setError(t('Enter the password')); return; }
-    setBusy(true); setError(null);
-    try { await api.passwordLogin(password); await checkAuth(); } catch (err) {
-      const code = (err as Error).message;
-      setError(code === 'wrong_password' ? t('Wrong password.') : code === 'too_many' ? t('Too many attempts. Try again in a few minutes.') : code);
-      setBusy(false);
-    }
-  };
 
   const dev = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,20 +31,6 @@ export function SignIn() {
         </div>
         <h1 className="signin__title">Corbot</h1>
         <p className="signin__sub">{t('AI teammates with their own computers. Hand them a task and they get it done.')}</p>
-        {passwordLogin && (
-          <form className="signin__dev" onSubmit={withPassword}>
-            <input
-              className="text-input"
-              type="password"
-              placeholder={t('Password')}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              aria-label={t('Password')}
-              autoComplete="current-password"
-            />
-            <button type="submit" className="btn btn--primary" disabled={busy}>{busy ? t('Signing in…') : t('Enter')}</button>
-          </form>
-        )}
         {googleLogin && (
           <a className="btn btn--primary signin__google" href="/api/auth/google/start">
             <GoogleG /> {t('Sign in with Google')}

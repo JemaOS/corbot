@@ -6,7 +6,7 @@ import { db, now } from './db.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
-import { createSession, destroySession, isAppPassword, isOwnerKey, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
+import { closeGate, createSession, destroySession, hasGate, hasGateFromHeader, isAppPassword, isOwnerKey, openGate, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
@@ -66,13 +66,19 @@ function findOrCreateUser(email: string, name?: string, preferId?: string) {
 
 api.get('/auth/me', (c) => {
   const user = userFromCookieHeader(c.req.header('cookie'));
-  // With a password set, it is the only door: Google sign-in would be a second entrance anyone with an
-  // account could take, and the password is meant to be the lock on the app.
-  return c.json({ user, devLogin: env.devLogin && !env.appPassword, passwordLogin: !!env.appPassword, features: { googleLogin: composioOn && !env.appPassword, apps: composioOn, voice: !!env.xaiKey } });
+  // The password is the door in front of the app (`gate`); the account is chosen after it, as before.
+  return c.json({
+    user,
+    gate: hasGateFromHeader(c.req.header('cookie')),
+    gateRequired: !!env.appPassword,
+    devLogin: env.devLogin,
+    features: { googleLogin: composioOn, apps: composioOn, voice: !!env.xaiKey },
+  });
 });
 
 api.get('/auth/google/start', async (c) => {
-  if (!composioOn || env.appPassword) return c.redirect(`${env.appUrl}/?login=failed`);
+  if (!composioOn) return c.redirect(`${env.appUrl}/?login=failed`);
+  if (!hasGate(c)) return c.redirect(`${env.appUrl}/`);
   const attemptId = newId('login');
   const provisional = newId('usr');
   const cb = `${env.serverUrl}/api/auth/google/callback?attempt=${attemptId}`;
@@ -105,7 +111,7 @@ api.get('/auth/google/callback', async (c) => {
  * tries in a quarter of an hour close the door for that address until the window passes.
  */
 const passwordTries = new Map<string, { n: number; until: number }>();
-api.post('/auth/password', async (c) => {
+api.post('/auth/gate', async (c) => {
   if (!env.appPassword) return c.json({ error: 'disabled' }, 403);
   const ip = (c.req.header('x-forwarded-for') ?? '').split(',')[0].trim() || c.req.header('cf-connecting-ip') || 'local';
   const t = passwordTries.get(ip);
@@ -119,15 +125,13 @@ api.post('/auth/password', async (c) => {
     return c.json({ error: 'wrong_password' }, 401);
   }
   passwordTries.delete(ip);
-  const email = env.ownerEmail || (db.prepare('SELECT email FROM users ORDER BY created_at LIMIT 1').get() as any)?.email;
-  if (!email) return c.json({ error: 'no account yet' }, 409);
-  const { id } = findOrCreateUser(email);
-  createSession(c, id);
+  openGate(c);
   return c.json({ ok: true });
 });
 
 api.post('/auth/dev', async (c) => {
-  if (!env.devLogin || env.appPassword) return c.json({ error: 'disabled' }, 403);
+  if (!env.devLogin) return c.json({ error: 'disabled' }, 403);
+  if (!hasGate(c)) return c.json({ error: 'gate' }, 403);
   const { email, name } = await c.req.json<{ email: string; name?: string }>();
   if (!email?.includes('@')) return c.json({ error: 'email required' }, 400);
   try {
@@ -171,11 +175,12 @@ api.get('/auth/link/:token', (c) => {
   return c.redirect('/');
 });
 
-api.post('/auth/logout', (c) => { destroySession(c); return c.json({ ok: true }); });
+api.post('/auth/logout', (c) => { destroySession(c); closeGate(c); return c.json({ ok: true }); });
 
 // everything below requires a session
 api.use('/*', async (c, next) => {
   if (c.req.path.startsWith('/api/auth/') || c.req.path.startsWith('/api/apps/callback') || c.req.path === '/api/health') return next();
+  if (!hasGate(c)) return c.json({ error: 'gate' }, 401);
   return requireUser(c, next);
 });
 

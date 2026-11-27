@@ -36,6 +36,37 @@ export function userFromCookieHeader(cookieHeader: string | undefined): User | n
   return userFromToken(m ? decodeURIComponent(m.slice(COOKIE.length + 1)) : undefined);
 }
 
+const GATE = 'corbot_gate';
+const GATE_TTL_MS = 7 * 24 * 3600 * 1000;
+
+/** The access password has been given in this browser: the door in front of the app is open. */
+export function openGate(c: Context) {
+  const t = token();
+  db.prepare('INSERT INTO gate_sessions(token,created_at,expires_at) VALUES (?,?,?)').run(t, now(), now() + GATE_TTL_MS);
+  setCookie(c, GATE, t, { httpOnly: true, sameSite: 'Lax', secure: env.appUrl.startsWith('https:'), path: '/', maxAge: GATE_TTL_MS / 1000 });
+}
+
+export function hasGate(c: Context): boolean {
+  if (!env.appPassword) return true;
+  const t = getCookie(c, GATE);
+  if (!t) return false;
+  const r = db.prepare('SELECT 1 FROM gate_sessions WHERE token=? AND expires_at>?').get(t, now());
+  return !!r;
+}
+
+export function hasGateFromHeader(cookieHeader: string | undefined): boolean {
+  if (!env.appPassword) return true;
+  const m = cookieHeader?.split(/;\s*/).find((p) => p.startsWith(`${GATE}=`));
+  if (!m) return false;
+  return !!db.prepare('SELECT 1 FROM gate_sessions WHERE token=? AND expires_at>?').get(decodeURIComponent(m.slice(GATE.length + 1)), now());
+}
+
+export function closeGate(c: Context) {
+  const t = getCookie(c, GATE);
+  if (t) db.prepare('DELETE FROM gate_sessions WHERE token=?').run(t);
+  deleteCookie(c, GATE, { path: '/' });
+}
+
 export const requireUser: MiddlewareHandler<AuthVars> = async (c, next) => {
   const u = userFromToken(getCookie(c, COOKIE));
   if (!u) return c.json({ error: 'unauthenticated' }, 401);

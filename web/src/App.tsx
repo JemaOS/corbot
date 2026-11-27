@@ -6,6 +6,7 @@ import { ComputerViewer } from './components/ComputerViewer';
 import { DetailsPanel } from './components/DetailsPanel';
 import { Sidebar } from './components/Sidebar';
 import { SignIn } from './components/SignIn';
+import { Gate } from './components/Gate';
 import { ConnectAppsModal } from './components/modals/ConnectAppsModal';
 import { CreateBotModal } from './components/modals/CreateBotModal';
 import { CreateGroupModal } from './components/modals/CreateGroupModal';
@@ -86,7 +87,9 @@ function Shell() {
 export function App() {
   const authChecked = useStore((s) => s.authChecked);
   const user = useStore((s) => s.user);
+  const gate = useStore((s) => s.gate);
   useEffect(() => { useStore.getState().checkAuth(); }, []);
   if (!authChecked) return <div className="boot" />;
+  if (!gate) return <Gate />;
   return user ? <Shell /> : <SignIn />;
 }

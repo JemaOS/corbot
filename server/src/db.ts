@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url TEXT,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS gate_sessions (
+  token TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
