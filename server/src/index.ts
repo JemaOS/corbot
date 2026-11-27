@@ -42,8 +42,10 @@ if (fs.existsSync(webDist)) {
     root: path.relative(process.cwd(), webDist),
     // The HTML must never be cached: after an update a phone that keeps the old page asks for chunks
     // that no longer exist and shows nothing. Hashed assets can be kept for a year.
+    // The service worker and the PWA manifest must also stay fresh so updates reach installed apps.
     onFound: (_path, c) => {
-      c.header('Cache-Control', _path.endsWith('.html') || _path === webDist ? 'no-store' : 'public, max-age=31536000, immutable');
+      const noStore = _path.endsWith('.html') || _path === webDist || _path.endsWith('/sw.js') || _path.endsWith('.webmanifest');
+      c.header('Cache-Control', noStore ? 'no-store' : 'public, max-age=31536000, immutable');
     },
   }));
   app.get('*', (c) => {
