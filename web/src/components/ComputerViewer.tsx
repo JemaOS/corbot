@@ -16,7 +16,9 @@ type Conn = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 /** Picture mode: the pause between two pictures once one has arrived. */
 const PICTURE_EVERY_MS = 700;
 
-/** True on touch-first devices (phones, tablets), where the screen is watched through pictures. */
+/** True on touch-first devices (phones, tablets), where the screen is watched through pictures:
+ * the live stream connects on Android browsers but never paints, so pictures are the only mode
+ * that works there. Desktops keep the live stream. */
 function usePictureMode(): boolean {
   const [on] = useState(() => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches);
   return on;
@@ -79,8 +81,8 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
   const large = variant === 'stage' || fullscreen;
   // The small panel view only streams a screen that already exists, so browsing bots never uses up screens.
   const wantLive = running && !paused && (variant === 'stage' || visible) && (opened || hasScreen);
-  // Phones and tablets watch through pictures: the live stream reaches them but their browser drops
-  // it within a second, while plain HTTP works everywhere the rest of the app does.
+  // Phones and tablets always watch through pictures: the live stream connects on Android browsers
+  // but never paints, so plain HTTP pictures are the only mode that works there. Desktops keep noVNC.
   const pictures = usePictureMode();
   const [shot, setShot] = useState(0);
   const keysRef = useRef<HTMLTextAreaElement>(null);
@@ -133,12 +135,9 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
       rfb.viewOnly = mode === 'watch';
       rfb.scaleViewport = true;
       rfb.resizeSession = false;
-      // Sharp text and little compression work on a fast link. A phone over a tailnet gets the same
-      // picture with far fewer bytes: the first full frame is what stalls there, so it is made cheap
-      // and the link decides the rest.
-      const small = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
-      rfb.qualityLevel = small ? 4 : 8;
-      rfb.compressionLevel = small ? 6 : 1;
+      // The relay adapts the final quality itself (sharp at rest, light in motion); this is our ask.
+      rfb.qualityLevel = 6;
+      rfb.compressionLevel = 2;
       rfb.background = 'transparent';
       rfb.focusOnClick = mode === 'control';
       rfb.addEventListener('connect', () => { if (!disposed) { hadFrame.current = true; setConn('connected'); if (mode === 'control') rfb?.focus(); } });

@@ -107,7 +107,7 @@ export const screens = {
 
   /** A JPEG of the screen as it is now. */
   async screenshot(screenId: string): Promise<{ data: Buffer; mime: string }> {
-    const r = await run('import', ['-silent', '-window', 'root', '-quality', '75', 'jpeg:-'], { display: displayNumberOf(screenId), timeoutMs: 10_000 });
+    const r = await run('import', ['-silent', '-window', 'root', '-quality', '85', 'jpeg:-'], { display: displayNumberOf(screenId), timeoutMs: 10_000 });
     if (r.code !== 0 || !r.out.length) throw new Error(`could not take a picture of screen ${screenId}`);
     return { data: r.out, mime: 'image/jpeg' };
   },

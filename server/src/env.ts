@@ -51,6 +51,10 @@ export const env = {
   // It is this machine: one X display per bot, set up by local/provision.sh.
   /** The VNC server of X display :N listens on this port + N, on 127.0.0.1. */
   vncPortBase: Number(process.env.CORBOT_VNC_PORT_BASE ?? 5900),
+  /** JPEG quality (0..9) when the screen is at rest: sharp text. During motion the relay drops to 5. */
+  screenQuality: Math.min(9, Math.max(0, Number(process.env.CORBOT_QUALITY ?? 8))),
+  /** Compression effort (0..9) used during motion; higher is smaller but costs CPU. */
+  screenCompress: Math.min(9, Math.max(0, Number(process.env.CORBOT_COMPRESS ?? 2))),
   /**
    * DevTools URL of a Chrome that already runs on the default screen and belongs to the primary bot
    * (e.g. http://127.0.0.1:9333). When set, we never start or stop that screen's Chrome ourselves.

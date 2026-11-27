@@ -6,6 +6,7 @@ import { userFromCookieHeader } from './lib/auth.js';
 import { readyScreen, screenFor } from './computer.js';
 import { screens } from './screens.js';
 import { viewerClosed, viewerOpened } from './idle.js';
+import { env } from './env.js';
 
 /**
  * VNC relay: browser <-> our server <-> the screen's VNC server.
@@ -79,12 +80,12 @@ const u32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); retu
 /** SetPixelFormat: the 32-bit true-colour format noVNC decodes (little-endian, shifts 0/8/16). */
 const DEFAULT_PIXEL_FORMAT = Buffer.from([0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0]);
 
-/** SetEncodings: compressed encodings first, raw last, medium JPEG quality, desktop-size updates. */
+/** SetEncodings: compressed encodings first, raw last, with the server-chosen JPEG quality and compression. */
 const DEFAULT_ENCODINGS = (() => {
   // No desktop-size pseudo-encodings here: advertising them makes the screen answer the first
   // request with a layout rectangle and no picture, which a client that asks only once never recovers
-  // from. The browser's own SetEncodings, when it sends one, still takes over.
-  const encs = [1, 7, -260, 16, 5, 2, 6, 0, -32 + 6, -256 + 6];
+  // from. The browser's own SetEncodings, when it sends one, is rewritten to the same quality below.
+  const encs = [1, 7, -260, 16, 5, 2, 6, 0, -32 + env.screenQuality, -256 + env.screenCompress];
   const b = Buffer.alloc(4 + 4 * encs.length);
   b.writeUInt8(2, 0); b.writeUInt16BE(encs.length, 2);
   encs.forEach((e, i) => b.writeInt32BE(e, 4 + 4 * i));
@@ -127,21 +128,51 @@ async function browserHandshake(q: ByteQueue, send: (b: Buffer) => void, serverI
 }
 
 /**
- * Rewrites a client's SetEncodings, dropping H.264. Android Chrome offers it (WebCodecs is there) and
- * then closes the socket within a second of the first frames, while the same session runs for minutes
- * on a desktop that does not offer it. Tight and JPEG are decoded in JavaScript and behave the same
- * everywhere, so the screen is asked for those instead.
+ * Rewrites a client's SetEncodings: drops H.264, and caps the JPEG quality and compression at the
+ * server's choice (CORBOT_QUALITY / CORBOT_COMPRESS). The adaptive loop in the relay then re-issues
+ * the encoding list at the quality that fits what the screen is doing (sharp at rest, light in motion).
+ * H.264 is dropped because Android Chrome offers it (WebCodecs is there) and then closes the socket
+ * within a second of the first frames; Tight and JPEG decode in JavaScript and behave the same everywhere.
+ * Quality/compression are pseudo-encodings (-32..-23 and -256..-247); if the client sent none, the
+ * server's is appended so there is always a defined level.
  */
-function withoutH264(b: Buffer): Buffer {
+function rewriteSetEncodings(b: Buffer): Buffer {
   if (b.length < 4 || b[0] !== 2) return b;
   const n = b.readUInt16BE(2);
   if (b.length < 4 + 4 * n) return b;
   const keep: number[] = [];
+  let hasQuality = false, hasCompress = false;
   for (let i = 0; i < n; i++) {
     const e = b.readInt32BE(4 + 4 * i);
-    if (e !== 50) keep.push(e);
+    if (e === 50) continue;                       // H.264
+    if (e >= -32 && e <= -23) {                   // client JPEG quality: cap, keep lighter
+      keep.push(-32 + Math.min(e + 32, env.screenQuality)); hasQuality = true; continue;
+    }
+    if (e >= -256 && e <= -247) {                 // client compression level: cap, keep lighter
+      keep.push(-256 + Math.min(e + 256, env.screenCompress)); hasCompress = true; continue;
+    }
+    keep.push(e);
   }
-  if (keep.length === n) return b;
+  if (!hasQuality) keep.push(-32 + env.screenQuality);
+  if (!hasCompress) keep.push(-256 + env.screenCompress);
+  const out = Buffer.alloc(4 + 4 * keep.length);
+  out.writeUInt8(2, 0);
+  out.writeUInt16BE(keep.length, 2);
+  keep.forEach((e, i) => out.writeInt32BE(e, 4 + 4 * i));
+  return out;
+}
+
+/** Rebuilds a SetEncodings with the given JPEG quality and compression, keeping the encoding list. */
+function withQuality(b: Buffer, quality: number, compress: number): Buffer {
+  const n = b.readUInt16BE(2);
+  const keep: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const e = b.readInt32BE(4 + 4 * i);
+    if (e >= -32 && e <= -23) continue;   // old quality pseudo
+    if (e >= -256 && e <= -247) continue; // old compression pseudo
+    keep.push(e);
+  }
+  keep.push(-32 + quality, -256 + compress);
   const out = Buffer.alloc(4 + 4 * keep.length);
   out.writeUInt8(2, 0);
   out.writeUInt16BE(keep.length, 2);
@@ -152,6 +183,8 @@ function withoutH264(b: Buffer): Buffer {
 /** Filters a client->server RFB stream, dropping input events. Returns bytes to forward. */
 class WatchFilter {
   private pending = Buffer.alloc(0);
+  /** The last SetEncodings the client sent (rewritten), so the relay can re-issue it at another quality. */
+  lastEncodings: Buffer | null = null;
   feed(chunk: Buffer): Buffer {
     this.pending = Buffer.concat([this.pending, chunk]);
     const out: Buffer[] = [];
@@ -163,7 +196,7 @@ class WatchFilter {
       if (len === 0 || b.length < len) break; // need more bytes
       const msg = b.subarray(0, len);
       const t = b[0];
-      if (t === 2) out.push(withoutH264(Buffer.from(msg)));
+      if (t === 2) { this.lastEncodings = rewriteSetEncodings(Buffer.from(msg)); out.push(this.lastEncodings); }
       else if (t !== 4 && t !== 5 && t !== 6) out.push(Buffer.from(msg));
       this.pending = b.subarray(len);
     }
@@ -248,8 +281,22 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   client.on('close', () => {
     clearInterval(watchdog);
     clearInterval(drainer);
+    if (adapt) clearInterval(adapt);
     console.log(`[vnc] flow up=${upBytes} down=${downBytes} lastClientMsg=${lastClientMsg} frames=${frames} peakBuffered=${peakBuffered} held=${held} updates=${updates}`);
   });
+
+  // Adaptive picture quality. A fixed JPEG quality is either blurry at rest (text at quality 5) or too
+  // heavy in motion (quality 8 video is ~6.6 MB/s). The relay watches the byte rate it forwards: while
+  // the screen is busy (video, scrolling) it asks the screen for quality 5; once the screen settles it
+  // asks for quality 8 (CORBOT_QUALITY) and requests one full non-incremental frame, because unchanged
+  // regions are never re-sent and would otherwise keep their motion-time artifacts.
+  let lastEncodings: Buffer = DEFAULT_ENCODINGS;
+  let appliedQ = -1;
+  let adapt: ReturnType<typeof setInterval> | null = null;
+  const noteEncodings = (raw: Buffer, fwd: Buffer) => {
+    const latest = mode === 'watch' ? filter.lastEncodings : (raw.length && raw[0] === 2 ? fwd : null);
+    if (latest && latest !== lastEncodings) { lastEncodings = latest; appliedQ = -1; }
+  };
 
   client.on('message', (data: Buffer) => {
     if (!piping) return fromClient.push(Buffer.from(data));
@@ -257,8 +304,9 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     if (b.length) lastClientMsg = b[0];
     if (b.length && b[0] === 3) frames++;
     const raw = Buffer.from(data);
-    const fwd = mode === 'watch' ? filter.feed(raw) : (raw.length && raw[0] === 2 ? withoutH264(raw) : raw);
+    const fwd = mode === 'watch' ? filter.feed(raw) : (raw.length && raw[0] === 2 ? rewriteSetEncodings(raw) : raw);
     if (fwd.length && upstream?.open) upstream.send(fwd);
+    noteEncodings(raw, fwd);
   });
   // Why and when the relay ends, once per session. A phone that gives up while the picture is being
   // decoded shows up here as a close with its code, instead of a bare "client closed".
@@ -275,9 +323,12 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
 
   // Backpressure. The screen produces a full frame far faster than a phone on a tailnet link can take
   // it; forwarding blindly piled a megabyte into the socket and the session died within a second. The
-  // screen is now held whenever the browser is behind, and let go once it has caught up.
-  const HIGH_WATER = 128 * 1024;
-  const LOW_WATER = 32 * 1024;
+  // screen is held whenever the browser is behind, and let go once it has caught up. The water marks
+  // are sized for video: a full 1440x900 JPEG update is a few hundred kilobytes, so a 128 KiB ceiling
+  // held the screen on nearly every frame and capped a fast link well below 60 fps. Half a megabyte
+  // lets a good link run at full frame rate while a slow one still fills the buffer and is held.
+  const HIGH_WATER = 512 * 1024;
+  const LOW_WATER = 128 * 1024;
   let held = false;
   let peakBuffered = 0;
   const release = () => {
@@ -336,18 +387,55 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     up.send(DEFAULT_PIXEL_FORMAT);
     up.send(DEFAULT_ENCODINGS);
     // And ask for the whole picture now, so a client that only asks once still receives one.
+    // FramebufferUpdateRequest is type(1) + incremental(1) + x(2) + y(2) + width(2) + height(2):
+    // width belongs at offset 6 and height at 8. (Writing them at 4/6 left height zero, so the
+    // screen answered with nothing and a client that asked only once never saw a picture.)
     const ask = Buffer.alloc(10);
     ask.writeUInt8(3, 0);
-    ask.writeUInt16BE(serverInit.readUInt16BE(0), 4);
-    ask.writeUInt16BE(serverInit.readUInt16BE(2), 6);
+    ask.writeUInt16BE(serverInit.readUInt16BE(0), 6);
+    ask.writeUInt16BE(serverInit.readUInt16BE(2), 8);
     up.send(ask);
     const leftoverUp = fromUp.takeAll();
     if (leftoverUp.length) for (let i = 0; i < leftoverUp.length; i += 16 * 1024) client.send(leftoverUp.subarray(i, i + 16 * 1024));
     const leftoverClient = fromClient.takeAll();
     if (leftoverClient.length) {
-      const fwd = mode === 'watch' ? filter.feed(leftoverClient) : (leftoverClient.length && leftoverClient[0] === 2 ? withoutH264(leftoverClient) : leftoverClient);
+      const fwd = mode === 'watch' ? filter.feed(leftoverClient) : (leftoverClient.length && leftoverClient[0] === 2 ? rewriteSetEncodings(leftoverClient) : leftoverClient);
       if (fwd.length) up.send(fwd);
+      noteEncodings(leftoverClient, fwd);
     }
+
+    // The adaptive-quality loop (see above). Hysteresis on the byte rate keeps a clip that pauses for
+    // a breath from flipping quality every half second: busy above 800 KB/s, at rest below 300 KB/s.
+    const fbW = serverInit.readUInt16BE(0), fbH = serverInit.readUInt16BE(2);
+    const restQ = env.screenQuality;
+    const motionQ = Math.min(5, restQ);
+    let busy = false;
+    let prevDown = downBytes;
+    let quietUntil = 0;
+    adapt = setInterval(() => {
+      if (!piping || !up.open || client.readyState !== WebSocket.OPEN) return;
+      // The full refresh below is itself a burst; do not read it as the screen starting to move.
+      if (Date.now() < quietUntil) { prevDown = downBytes; return; }
+      const rate = (downBytes - prevDown) * 2; // bytes/s over the last 500 ms
+      prevDown = downBytes;
+      const wasBusy = busy;
+      if (!busy && rate > 800_000) busy = true;
+      else if (busy && rate < 300_000) busy = false;
+      const wantQ = busy ? motionQ : restQ;
+      if (wantQ === appliedQ) return;
+      appliedQ = wantQ;
+      up.send(withQuality(lastEncodings, wantQ, busy ? env.screenCompress : 1));
+      // Back at rest: re-send the whole picture once at the sharp quality, so regions that stopped
+      // moving lose their motion-time blur instead of keeping it until they next change.
+      if (wasBusy && !busy) {
+        const refresh = Buffer.alloc(10);
+        refresh.writeUInt8(3, 0);
+        refresh.writeUInt16BE(fbW, 6);
+        refresh.writeUInt16BE(fbH, 8);
+        up.send(refresh);
+        quietUntil = Date.now() + 1000;
+      }
+    }, 500);
   } catch (e: any) {
     console.warn('[vnc] relay failed', e?.message ?? e);
     closeAll(1011, String(e?.message ?? e));
