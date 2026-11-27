@@ -10,6 +10,7 @@ interface Transcript { generation: number; bySeq: Record<number, Row>; loaded: b
 interface State {
   user: User | null;
   devLogin: boolean;
+  passwordLogin: boolean;
   /** Google sign-in runs through Composio; a server without it only has the email form. */
   googleLogin: boolean;
   authChecked: boolean;
@@ -56,6 +57,7 @@ const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } ca
 export const useStore = create<State>((set, get) => ({
   user: null,
   devLogin: false,
+  passwordLogin: false,
   googleLogin: true,
   authChecked: false,
   bots: [],
@@ -77,8 +79,8 @@ export const useStore = create<State>((set, get) => ({
 
   async checkAuth() {
     try {
-      const { user, devLogin, features } = await api.me();
-      set({ user, devLogin, googleLogin: features?.googleLogin !== false, authChecked: true });
+      const { user, devLogin, passwordLogin, features } = await api.me();
+      set({ user, devLogin, passwordLogin: !!passwordLogin, googleLogin: features?.googleLogin !== false, authChecked: true });
     } catch {
       set({ user: null, authChecked: true });
     }

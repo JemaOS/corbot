@@ -6,7 +6,7 @@ import { db, now } from './db.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
-import { createSession, destroySession, isOwnerKey, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
+import { createSession, destroySession, isAppPassword, isOwnerKey, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
@@ -66,7 +66,7 @@ function findOrCreateUser(email: string, name?: string, preferId?: string) {
 
 api.get('/auth/me', (c) => {
   const user = userFromCookieHeader(c.req.header('cookie'));
-  return c.json({ user, devLogin: env.devLogin, features: { googleLogin: composioOn, apps: composioOn, voice: !!env.xaiKey } });
+  return c.json({ user, devLogin: env.devLogin, passwordLogin: !!env.appPassword, features: { googleLogin: composioOn, apps: composioOn, voice: !!env.xaiKey } });
 });
 
 api.get('/auth/google/start', async (c) => {
@@ -96,6 +96,32 @@ api.get('/auth/google/callback', async (c) => {
     console.error('[auth] google callback', e);
     return c.redirect(`${env.appUrl}/?login=failed`);
   }
+});
+
+/**
+ * The one password that opens the app from the internet. Failures are counted per address: five wrong
+ * tries in a quarter of an hour close the door for that address until the window passes.
+ */
+const passwordTries = new Map<string, { n: number; until: number }>();
+api.post('/auth/password', async (c) => {
+  if (!env.appPassword) return c.json({ error: 'disabled' }, 403);
+  const ip = (c.req.header('x-forwarded-for') ?? '').split(',')[0].trim() || c.req.header('cf-connecting-ip') || 'local';
+  const t = passwordTries.get(ip);
+  if (t && t.n >= 5 && t.until > Date.now()) return c.json({ error: 'too many attempts, try again later' }, 429);
+  const body = (await c.req.json().catch(() => null)) as { password?: string } | null;
+  const okay = isAppPassword(String(body?.password ?? ''));
+  if (!okay) {
+    const fresh = !t || t.until <= Date.now() ? { n: 1, until: Date.now() + 15 * 60_000 } : { n: t.n + 1, until: t.until };
+    passwordTries.set(ip, fresh);
+    await new Promise((r) => setTimeout(r, 250)); // a slow answer costs a guesser more than it costs a person
+    return c.json({ error: 'wrong password' }, 401);
+  }
+  passwordTries.delete(ip);
+  const email = env.ownerEmail || (db.prepare('SELECT email FROM users ORDER BY created_at LIMIT 1').get() as any)?.email;
+  if (!email) return c.json({ error: 'no account yet' }, 409);
+  const { id } = findOrCreateUser(email);
+  createSession(c, id);
+  return c.json({ ok: true });
 });
 
 api.post('/auth/dev', async (c) => {

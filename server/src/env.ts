@@ -24,6 +24,10 @@ export const env = {
   composioKey: process.env.COMPOSIO_API_KEY ?? '',
   sessionSecret: req('SESSION_SECRET'),
   devLogin: process.env.DEV_LOGIN === '1',
+  /** A single password for reaching the app from the internet. Empty = no password form. */
+  appPassword: process.env.APP_PASSWORD ?? '',
+  /** Who the password signs in. Empty = the first user in the database. */
+  ownerEmail: process.env.OWNER_EMAIL ?? '',
   dbPath: process.env.DB_PATH ?? new URL('../../data/corbot.db', import.meta.url).pathname,
 
   // ---- Hermes engine ----

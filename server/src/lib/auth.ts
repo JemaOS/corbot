@@ -43,6 +43,14 @@ export const requireUser: MiddlewareHandler<AuthVars> = async (c, next) => {
   await next();
 };
 
+/** Is this the app password? Compared in constant time, on digests of equal length. */
+export function isAppPassword(given: string): boolean {
+  if (!env.appPassword || !given) return false;
+  const a = crypto.createHash('sha256').update(given).digest();
+  const b = crypto.createHash('sha256').update(env.appPassword).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 /**
  * Key for signing in from the machine the server runs on (POST /api/auth/owner). It is derived from
  * SESSION_SECRET, so only someone who can read the server's .env can make it:

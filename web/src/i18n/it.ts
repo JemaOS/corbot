@@ -605,6 +605,9 @@ const dict: Record<string, string> = {
   "{name}’s screen": "Schermo di {name}",
   "The screen did not take that.": "Lo schermo non ha accettato questa azione.",
   "Keyboard": "Tastiera",
+  "Enter the password": "Inserisci la password",
+  "Password": "Password",
+  "Enter": "Entra",
 };
 
 export default dict;
