@@ -21,7 +21,11 @@ export function SignIn() {
     e.preventDefault();
     if (!password) { setError(t('Enter the password')); return; }
     setBusy(true); setError(null);
-    try { await api.passwordLogin(password); await checkAuth(); } catch (err) { setError((err as Error).message); setBusy(false); }
+    try { await api.passwordLogin(password); await checkAuth(); } catch (err) {
+      const code = (err as Error).message;
+      setError(code === 'wrong_password' ? t('Wrong password.') : code === 'too_many' ? t('Too many attempts. Try again in a few minutes.') : code);
+      setBusy(false);
+    }
   };
 
   const dev = async (e: React.FormEvent) => {

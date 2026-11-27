@@ -608,6 +608,8 @@ const dict: Record<string, string> = {
   "Enter the password": "Saisis le mot de passe",
   "Password": "Mot de passe",
   "Enter": "Entrer",
+  "Wrong password.": "Mot de passe incorrect.",
+  "Too many attempts. Try again in a few minutes.": "Trop de tentatives. Réessaie dans quelques minutes.",
 };
 
 export default dict;

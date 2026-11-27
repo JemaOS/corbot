@@ -66,11 +66,13 @@ function findOrCreateUser(email: string, name?: string, preferId?: string) {
 
 api.get('/auth/me', (c) => {
   const user = userFromCookieHeader(c.req.header('cookie'));
-  return c.json({ user, devLogin: env.devLogin, passwordLogin: !!env.appPassword, features: { googleLogin: composioOn, apps: composioOn, voice: !!env.xaiKey } });
+  // With a password set, it is the only door: Google sign-in would be a second entrance anyone with an
+  // account could take, and the password is meant to be the lock on the app.
+  return c.json({ user, devLogin: env.devLogin && !env.appPassword, passwordLogin: !!env.appPassword, features: { googleLogin: composioOn && !env.appPassword, apps: composioOn, voice: !!env.xaiKey } });
 });
 
 api.get('/auth/google/start', async (c) => {
-  if (!composioOn) return c.redirect(`${env.appUrl}/?login=failed`);
+  if (!composioOn || env.appPassword) return c.redirect(`${env.appUrl}/?login=failed`);
   const attemptId = newId('login');
   const provisional = newId('usr');
   const cb = `${env.serverUrl}/api/auth/google/callback?attempt=${attemptId}`;
@@ -107,14 +109,14 @@ api.post('/auth/password', async (c) => {
   if (!env.appPassword) return c.json({ error: 'disabled' }, 403);
   const ip = (c.req.header('x-forwarded-for') ?? '').split(',')[0].trim() || c.req.header('cf-connecting-ip') || 'local';
   const t = passwordTries.get(ip);
-  if (t && t.n >= 5 && t.until > Date.now()) return c.json({ error: 'too many attempts, try again later' }, 429);
+  if (t && t.n >= 5 && t.until > Date.now()) return c.json({ error: 'too_many' }, 429);
   const body = (await c.req.json().catch(() => null)) as { password?: string } | null;
   const okay = isAppPassword(String(body?.password ?? ''));
   if (!okay) {
     const fresh = !t || t.until <= Date.now() ? { n: 1, until: Date.now() + 15 * 60_000 } : { n: t.n + 1, until: t.until };
     passwordTries.set(ip, fresh);
     await new Promise((r) => setTimeout(r, 250)); // a slow answer costs a guesser more than it costs a person
-    return c.json({ error: 'wrong password' }, 401);
+    return c.json({ error: 'wrong_password' }, 401);
   }
   passwordTries.delete(ip);
   const email = env.ownerEmail || (db.prepare('SELECT email FROM users ORDER BY created_at LIMIT 1').get() as any)?.email;
@@ -125,7 +127,7 @@ api.post('/auth/password', async (c) => {
 });
 
 api.post('/auth/dev', async (c) => {
-  if (!env.devLogin) return c.json({ error: 'disabled' }, 403);
+  if (!env.devLogin || env.appPassword) return c.json({ error: 'disabled' }, 403);
   const { email, name } = await c.req.json<{ email: string; name?: string }>();
   if (!email?.includes('@')) return c.json({ error: 'email required' }, 400);
   try {
