@@ -248,7 +248,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   client.on('close', () => {
     clearInterval(watchdog);
     clearInterval(drainer);
-    console.log(`[vnc] flow up=${upBytes} down=${downBytes} lastClientMsg=${lastClientMsg} frames=${frames} peakBuffered=${peakBuffered} held=${held} upMsg=${upMsg} rects=${rects} enc=${rectEnc.slice(0, 80)}`);
+    console.log(`[vnc] flow up=${upBytes} down=${downBytes} lastClientMsg=${lastClientMsg} frames=${frames} peakBuffered=${peakBuffered} held=${held} updates=${updates}`);
   });
 
   client.on('message', (data: Buffer) => {
@@ -276,7 +276,6 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   // Backpressure. The screen produces a full frame far faster than a phone on a tailnet link can take
   // it; forwarding blindly piled a megabyte into the socket and the session died within a second. The
   // screen is now held whenever the browser is behind, and let go once it has caught up.
-  const FRAME_BYTES = 16 * 1024;
   const HIGH_WATER = 128 * 1024;
   const LOW_WATER = 32 * 1024;
   let held = false;
@@ -288,45 +287,8 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
   const drainer = setInterval(release, 25);
   clientSocket?.on('drain', release);
 
-  // What the screen actually sent: message type and rectangle encodings. A browser that closes right
-  // after a particular encoding is only visible here.
-  let upMsg = -1;
-  let rectEnc = '';
-  let rects = 0;
-  let tail = Buffer.alloc(0);
-  let want = 0;
-  let inFbu = 0;
-  const seeUpstream = (chunk: Buffer) => {
-    tail = Buffer.concat([tail, chunk]);
-    for (;;) {
-      if (inFbu > 0) {
-        if (tail.length < 12) return;
-        const e = tail.readInt32BE(8);
-        rectEnc += (rectEnc ? ',' : '') + e;
-        rects++;
-        tail = tail.subarray(12);
-        inFbu--;
-        if (e === -224) inFbu = 0; // LastRect: the rest is not rectangles
-        continue;
-      }
-      if (want === 0) {
-        if (tail.length < 1) return;
-        upMsg = tail[0];
-        if (upMsg === 0) {
-          if (tail.length < 4) return;
-          const n = tail.readUInt16BE(2);
-          tail = tail.subarray(4);
-          inFbu = n;
-          if (n === 0) { want = 0; continue; }
-          continue;
-        }
-        // Other server messages are rare on this link; stop parsing rather than guess a length.
-        want = -1;
-        return;
-      }
-      return;
-    }
-  };
+  // Framebuffer updates delivered to the browser, for the end-of-session line.
+  let updates = 0;
 
   // Every byte the browser receives, on one line: the socket can be closed by the proxy, by the
   // phone, or by our own code, and only the TCP events say which.
@@ -338,13 +300,10 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
 
   const events: UpstreamEvents = {
     data: (d) => {
-      seeUpstream(d);
       if (!piping) return fromUp.push(d);
       if (client.readyState !== WebSocket.OPEN) return;
-      // One RFB update can be hundreds of kilobytes. Chrome on Android closes the socket when a single
-      // binary frame is that big, so the picture is sent in small frames; RFB is a byte stream, the
-      // browser reassembles it either way.
-      for (let i = 0; i < d.length; i += FRAME_BYTES) client.send(d.subarray(i, i + FRAME_BYTES), { binary: true });
+      updates++;
+      client.send(d, { binary: true });
       // `bufferedAmount` stays near zero: ws hands the bytes to the socket at once. What actually
       // piles up on a slow link is the socket's own write queue, so that is what is watched.
       const queued = (clientSocket?.writableLength ?? 0) + client.bufferedAmount;
